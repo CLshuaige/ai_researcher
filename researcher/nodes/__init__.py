@@ -6,6 +6,9 @@ from researcher.nodes.experiment_execution import experiment_execution_node
 from researcher.nodes.report_generation import report_generation_node
 from researcher.nodes.review import review_node
 
+from researcher.nodes.initialization import init_node
+from researcher.nodes.routers import router_node
+
 __all__ = [
     "task_parsing_node",
     "hypothesis_construction_node",
@@ -13,5 +16,8 @@ __all__ = [
     "literature_review_node",
     "experiment_execution_node",
     "report_generation_node",
-    "review_node"
+    "review_node",
+
+    "init_node",
+    "router_node",
 ]

@@ -1,4 +1,6 @@
-from typing import TypedDict, Optional, List, Dict, Any
+"""Global state definition for LangGraph workflow."""
+
+from typing import TypedDict, Optional
 from pathlib import Path
 
 from researcher.schemas import (
@@ -11,12 +13,16 @@ from researcher.schemas import (
 
 
 class ResearchState(TypedDict):
-    """Global state for research workflow"""
-    # Input and task definition
+    """Global state for research workflow
+
+    State tracks workflow progress and structured artifacts.
+    Artifacts are also persisted to files for durability.
+    """
+    # Input
     input_text: str
     task: Optional[str]
 
-    # Research artifacts (structured)
+    # Research artifacts (structured objects passed between nodes)
     literature: Optional[LiteratureReview]
     idea: Optional[ResearchIdea]
     method: Optional[ExperimentalMethod]
@@ -24,14 +30,10 @@ class ResearchState(TypedDict):
     paper: Optional[str]
     referee: Optional[ReviewReport]
 
-    # Debate tracking
-    current_round: int
-    debate_history: List[Dict[str, Any]]
-
     # Workspace management
     workspace_dir: Path
     project_name: str
 
-    # Metadata
+    # Workflow metadata
     stage: str
     error: Optional[str]

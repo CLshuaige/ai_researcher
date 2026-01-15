@@ -5,8 +5,8 @@ from researcher.state import ResearchState
 from researcher.schemas import ResearchIdea, IdeaCandidate
 from researcher.agents import ProposerAgent, CriticAgent
 from researcher.debate import DebateTeam
-from researcher.config import config
-from researcher.utils import save_markdown, log_stage, get_artifact_path
+from researcher.config import DEBATE_MAX_ROUNDS
+from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
 from researcher.prompts.templates import IDEA_PROPOSAL_PROMPT
 from researcher.exceptions import WorkflowError
 
@@ -26,10 +26,15 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "hypothesis_construction", "Starting hypothesis construction")
 
     try:
-        # Prepare context for debate
+        task = load_artifact_from_file(workspace_dir, "task")
+        literature_text = load_artifact_from_file(workspace_dir, "literature") or "No literature review available"
+
+        if not task:
+            raise WorkflowError("Task file not found")
+
         initial_message = IDEA_PROPOSAL_PROMPT.format(
-            task=state["task"],
-            literature=state["literature"].synthesis if state["literature"] else "No literature review available"
+            task=task,
+            literature=literature_text
         )
 
         proposer = ProposerAgent(name="IdeaProposer")
@@ -38,12 +43,12 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         debate_team = DebateTeam(
             proposer=proposer,
             critic=critic,
-            max_rounds=config.debate.max_rounds,
+            max_rounds=DEBATE_MAX_ROUNDS,
             workspace_dir=workspace_dir
         )
 
         # Run debate
-        log_stage(workspace_dir, "hypothesis_construction", f"Running debate (max {config.debate.max_rounds} rounds)")
+        log_stage(workspace_dir, "hypothesis_construction", f"Running debate (max {DEBATE_MAX_ROUNDS} rounds)")
         debate_result = debate_team.run(initial_message)
 
         idea = _parse_idea_from_debate(debate_result.final_output, debate_result.rounds)
@@ -55,9 +60,9 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
                  f"Hypothesis construction completed. Generated {len(idea.candidates)} ideas, selected: {idea.selected_idea.content[:100]}...")
 
         return {
+            "task": task,
             "idea": idea,
-            "stage": "hypothesis_construction",
-            "current_round": debate_result.rounds
+            "stage": "hypothesis_construction"
         }
 
     except Exception as e:

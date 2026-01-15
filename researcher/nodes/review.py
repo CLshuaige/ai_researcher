@@ -3,8 +3,8 @@ from typing import Dict, Any
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
 from researcher.agents import ReviewerAgent
-from researcher.config import config
-from researcher.utils import save_markdown, log_stage, get_artifact_path
+from researcher.config import get_model_config
+from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
 from researcher.prompts.templates import REVIEW_PROMPT
 from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
@@ -16,10 +16,21 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "review", "Starting review")
 
     try:
-        reviewer = ReviewerAgent()
-        llm_client = get_llm_client(config.model)
+        paper = load_artifact_from_file(workspace_dir, "paper")
+        if not paper:
+            # Try .md extension
+            paper_md_path = get_artifact_path(workspace_dir, "paper").with_suffix('.md')
+            if paper_md_path.exists():
+                with open(paper_md_path, 'r', encoding='utf-8') as f:
+                    paper = f.read()
 
-        prompt = REVIEW_PROMPT.format(paper=state["paper"])
+        if not paper:
+            raise WorkflowError("Paper file not found")
+
+        reviewer = ReviewerAgent()
+        llm_client = get_llm_client(get_model_config())
+
+        prompt = REVIEW_PROMPT.format(paper=paper)
 
         messages = [
             {"role": "system", "content": reviewer.system_prompt},
@@ -37,6 +48,8 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         log_stage(workspace_dir, "review", f"Review completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
 
         return {
+            "task": load_artifact_from_file(workspace_dir, "task"),
+            "paper": paper,
             "referee": referee,
             "stage": "review"
         }

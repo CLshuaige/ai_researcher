@@ -10,7 +10,6 @@ from datetime import datetime
 
 from researcher.researcher import AIResearcher
 from researcher.llm import MODEL_PRESETS, get_model_preset
-from researcher.config import config
 
 
 # ============================================================================

@@ -49,7 +49,7 @@ class BaseAgent(ABC):
 
 
 class ProposerAgent(BaseAgent):
-    """Agent for proposing research ideas or methods"""
+    """Agent for proposing research ideas"""
 
     def __init__(self, name: str = "Proposer"):
         super().__init__(name, "proposer", PROPOSER_SYSTEM_PROMPT)

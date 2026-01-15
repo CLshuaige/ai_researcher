@@ -47,12 +47,16 @@ class OpenAIClient(BaseLLMClient):
         temperature = kwargs.get("temperature", self.config.temperature)
         max_tokens = kwargs.get("max_tokens", self.config.max_tokens)
 
-        response = self.client.chat.completions.create(
-            model=self.config.model_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
+        request_params = {
+            "model": self.config.model_name,
+            "messages": messages,
+        }
+        if temperature is not None:
+            request_params["temperature"] = temperature
+        if max_tokens is not None:
+            request_params["max_tokens"] = max_tokens
+
+        response = self.client.chat.completions.create(**request_params)
         return response.choices[0].message.content
 
 
@@ -78,13 +82,17 @@ class AnthropicClient(BaseLLMClient):
             else:
                 user_messages.append(msg)
 
-        response = self.client.messages.create(
-            model=self.config.model_name,
-            system=system_message,
-            messages=user_messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
+        request_params = {
+            "model": self.config.model_name,
+            "messages": user_messages,
+            "max_tokens": max_tokens if max_tokens is not None else 4096,
+        }
+        if system_message:
+            request_params["system"] = system_message
+        if temperature is not None:
+            request_params["temperature"] = temperature
+
+        response = self.client.messages.create(**request_params)
         return response.content[0].text
 
 
@@ -108,32 +116,28 @@ MODEL_PRESETS: Dict[str, ModelConfig] = {
     "openai-gpt4o": ModelConfig(
         provider="openai",
         model_name="gpt-4o",
-        api_key=None,  # Read from OPENAI_API_KEY if needed
+        api_key=None,
         base_url=None,
-        temperature=0.7,
-        max_tokens=16384,
+        temperature=None,
+        max_tokens=None,
     ),
 
     # Local Qwen models (OpenAI-compatible HTTP endpoint)
-    #
-    # These assume you are running a local gateway that exposes an
-    # OpenAI-compatible /v1/chat/completions endpoint, and that the
-    # model_name below matches what the gateway expects.
     "qwen-30b-local": ModelConfig(
         provider="openai",
         model_name="Qwen/Qwen3-30B-A3B-Instruct-2507",
         api_key="dummy-key",
         base_url="http://127.0.0.1:8000/v1",
-        temperature=0.7,
-        max_tokens=4096,
+        temperature=None,
+        max_tokens=None,
     ),
     "qwen-80b-local": ModelConfig(
         provider="openai",
         model_name="Qwen/Qwen3-Next-80B-A3B-Instruct",
         api_key="dummy-key",
         base_url="http://127.0.0.1:8000/v1",
-        temperature=0.7,
-        max_tokens=4096,
+        temperature=None,
+        max_tokens=None,
     ),
 }
 

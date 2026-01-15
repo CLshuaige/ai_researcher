@@ -4,8 +4,8 @@ from researcher.state import ResearchState
 from researcher.schemas import ExperimentalMethod, TaskAssignment
 from researcher.agents import PlannerAgent, CriticAgent
 from researcher.debate import DebateTeam
-from researcher.config import config
-from researcher.utils import save_markdown, log_stage, get_artifact_path
+from researcher.config import DEBATE_MAX_ROUNDS
+from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
 from researcher.prompts.templates import METHOD_PROPOSAL_PROMPT
 from researcher.exceptions import WorkflowError
 
@@ -16,11 +16,15 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "method_design", "Starting method design")
 
     try:
-        idea_content = state["idea"].selected_idea.content if state["idea"] else "No idea available"
+        task = load_artifact_from_file(workspace_dir, "task")
+        idea_content = load_artifact_from_file(workspace_dir, "idea") or "No idea available"
+
+        if not task:
+            raise WorkflowError("Task file not found")
 
         initial_message = METHOD_PROPOSAL_PROMPT.format(
             idea=idea_content,
-            task=state["task"]
+            task=task
         )
 
         proposer = PlannerAgent(name="MethodPlanner")
@@ -29,11 +33,11 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         debate_team = DebateTeam(
             proposer=proposer,
             critic=critic,
-            max_rounds=config.debate.max_rounds,
+            max_rounds=DEBATE_MAX_ROUNDS,
             workspace_dir=workspace_dir
         )
 
-        log_stage(workspace_dir, "method_design", f"Running debate (max {config.debate.max_rounds} rounds)")
+        log_stage(workspace_dir, "method_design", f"Running debate (max {DEBATE_MAX_ROUNDS} rounds)")
         debate_result = debate_team.run(initial_message)
 
         method = _parse_method_from_debate(debate_result.final_output, debate_result.rounds)
@@ -44,9 +48,9 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         log_stage(workspace_dir, "method_design", f"Method design completed. {len(method.steps)} steps defined")
 
         return {
+            "task": task,
             "method": method,
-            "stage": "method_design",
-            "current_round": debate_result.rounds
+            "stage": "method_design"
         }
 
     except Exception as e:

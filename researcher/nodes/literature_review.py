@@ -4,8 +4,8 @@ import json
 from researcher.state import ResearchState
 from researcher.schemas import LiteratureReview, LiteratureItem
 from researcher.agents import SearcherAgent, SummarizerAgent
-from researcher.config import config
-from researcher.utils import save_markdown, save_json, log_stage, get_artifact_path
+from researcher.config import get_model_config
+from researcher.utils import save_markdown, save_json, log_stage, get_artifact_path, load_artifact_from_file
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
 from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
@@ -17,11 +17,15 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "literature_review", "Starting literature review")
 
     try:
+        task = load_artifact_from_file(workspace_dir, "task")
+        if not task:
+            raise WorkflowError("Task file not found")
+
         searcher = SearcherAgent()
         summarizer = SummarizerAgent()
-        llm_client = get_llm_client(config.model)
+        llm_client = get_llm_client(get_model_config())
 
-        search_prompt = LITERATURE_SEARCH_PROMPT.format(task=state["task"])
+        search_prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
         search_messages = [
             {"role": "system", "content": searcher.system_prompt},
             {"role": "user", "content": search_prompt}
@@ -40,7 +44,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
             papers=papers_text,
-            task=state["task"]
+            task=task
         )
         summary_messages = [
             {"role": "system", "content": summarizer.system_prompt},
@@ -67,6 +71,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         log_stage(workspace_dir, "literature_review", f"Literature review completed. Found {len(literature_items)} papers")
 
         return {
+            "task": task,
             "literature": literature,
             "stage": "literature_review"
         }

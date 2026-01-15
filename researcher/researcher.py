@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 import time
 
-from researcher.config import config, ResearcherConfig
+from researcher.config import get_workspace_dir, update_model_config
 from researcher.state import ResearchState
 from researcher.graph.researcher_graph import build_researcher_graph
 from researcher.utils import initialize_workspace, save_markdown, load_markdown, get_artifact_path
@@ -34,12 +34,11 @@ class AIResearcher:
     ):
         self.project_name = project_name
 
-        # If a model preset is provided, update the global configuration model
+        # Update model configuration if preset provided
         if model_preset is not None:
-            from researcher.config import config as global_config
             from researcher.llm import get_model_preset
             model_config = get_model_preset(model_preset)
-            global_config.model = model_config
+            update_model_config(model_config)
             print(f"Using model preset: {model_preset} ({model_config.provider}/{model_config.model_name})")
 
         # Setup workspace
@@ -47,7 +46,7 @@ class AIResearcher:
             self.workspace_dir = Path(workspace_dir)
             self.workspace_dir.mkdir(parents=True, exist_ok=True)
         else:
-            self.workspace_dir = config.workspace.get_project_dir(project_name)
+            self.workspace_dir = get_workspace_dir(project_name)
 
         if clear_workspace:
             import shutil
@@ -60,13 +59,14 @@ class AIResearcher:
         self.graph = build_researcher_graph()
         self.current_state: Optional[ResearchState] = None
 
-    def run(self, input_text: str, input_file: Optional[Path] = None) -> ResearchState:
+    def run(self, input_text: str, input_file: Optional[Path] = None, config: Optional[dict] = None) -> ResearchState:
         """
         Execute the complete research workflow
 
         Args:
             input_text: Initial research prompt or task description
             input_file: Optional path to input.md file
+            config: Optional configuration dictionary
 
         Returns:
             Final research state with all artifacts
@@ -82,6 +82,7 @@ class AIResearcher:
 
         initial_state: ResearchState = {
             "input_text": input_text,
+            "config": config,
             "task": None,
             "literature": None,
             "idea": None,
@@ -89,8 +90,6 @@ class AIResearcher:
             "results": None,
             "paper": None,
             "referee": None,
-            "current_round": 0,
-            "debate_history": [],
             "workspace_dir": self.workspace_dir,
             "project_name": self.project_name,
             "stage": "initialization",

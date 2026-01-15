@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from researcher.researcher import AIResearcher
+from researcher.utils import load_config_yaml
 
 
 def main():
@@ -12,6 +13,13 @@ def main():
         "--input",
         type=str,
         help="Research task description or path to input.md file"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="./configs/debug.yaml",
+        help="Path to configuration YAML file, which decide the researcher behavior"
+
     )
     parser.add_argument(
         "--project-name",
@@ -56,6 +64,9 @@ def main():
         input_text = args.input or "Default research task"
         input_file = None
 
+    # Load configuration YAML
+    config = load_config_yaml(Path(args.config))
+
     # Initialize and run researcher
     researcher = AIResearcher(
         project_name=args.project_name,
@@ -64,7 +75,7 @@ def main():
     print(f"Workspace: {researcher.get_workspace_path()}")
     print("Starting research workflow...")
 
-    final_state = researcher.run(input_text=input_text, input_file=input_file)
+    final_state = researcher.run(input_text=input_text, input_file=input_file, config=config)
 
     print(f"\nWorkflow completed. Stage: {final_state['stage']}")
     print(f"Workspace: {researcher.get_workspace_path()}")

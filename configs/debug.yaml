@@ -1,0 +1,44 @@
+# Model Settings
+model:
+  default_provider: "qwen3"
+
+  qwen3:
+    model_name: "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    model_path: "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-30B-A3B-Instruct-2507"
+
+    # Global generation parameters
+    max_length: 32768
+    temperature: 0.7
+    #top_p: 0.9
+    #repetition_penalty: 1.1
+
+# Workspace Settings
+workspace:
+  base_dir: "/home/ai_researcher/projects/ai_researcher/workspace
+
+# Researcher Settings
+researcher:
+  task_parsing:
+    mode: "basic"
+    human_in_the_loop: false
+    max_iterations: 3
+  literature_review:
+    mode: "basic"
+    num_papers: 5
+  hypothesis_construction:
+    mode: "basic"
+    max_debate_iterations: 5
+  method_design:
+    mode: "basic"
+    max_debate_iterations: 5
+  experiment_execution:
+    mode: "basic"
+    code_execution_timeout: 300  # seconds
+    code_execution_retries: 2
+  report_generation:
+    mode: "detailed"
+    include_references: true
+  review:
+    mode: "basic"
+
+

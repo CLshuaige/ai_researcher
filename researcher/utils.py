@@ -69,3 +69,18 @@ def log_stage(workspace_dir: Path, stage: str, message: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"[{timestamp}] [{stage}] {message}\n")
+
+
+def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional[str]:
+    """Load artifact content from file"""
+    artifact_path = get_artifact_path(workspace_dir, artifact_type)
+    return load_markdown(artifact_path)
+
+def load_config_yaml(config_path: Path) -> dict:
+    """Load configuration from YAML file"""
+    import yaml
+    if not config_path.exists():
+        return {}
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+

@@ -2,8 +2,8 @@ from typing import Dict, Any
 
 from researcher.state import ResearchState
 from researcher.agents import WriterAgent
-from researcher.config import config
-from researcher.utils import save_markdown, log_stage, get_artifact_path
+from researcher.config import get_model_config
+from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
 from researcher.prompts.templates import PAPER_WRITING_PROMPT
 from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
@@ -15,16 +15,17 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "report_generation", "Starting report generation")
 
     try:
-        writer = WriterAgent()
-        llm_client = get_llm_client(config.model)
+        task = load_artifact_from_file(workspace_dir, "task") or ""
+        literature_synthesis = load_artifact_from_file(workspace_dir, "literature") or ""
+        idea_content = load_artifact_from_file(workspace_dir, "idea") or ""
+        method_overview = load_artifact_from_file(workspace_dir, "method") or ""
+        results_summary = load_artifact_from_file(workspace_dir, "results") or ""
 
-        idea_content = state["idea"].selected_idea.content if state["idea"] else ""
-        method_overview = state["method"].overview if state["method"] else ""
-        results_summary = state["results"].summary if state["results"] else ""
-        literature_synthesis = state["literature"].synthesis if state["literature"] else ""
+        writer = WriterAgent()
+        llm_client = get_llm_client(get_model_config())
 
         prompt = PAPER_WRITING_PROMPT.format(
-            task=state["task"],
+            task=task,
             literature=literature_synthesis,
             idea=idea_content,
             method=method_overview,
@@ -45,6 +46,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         log_stage(workspace_dir, "report_generation", "Report generation completed")
 
         return {
+            "task": task,
             "paper": paper,
             "stage": "report_generation"
         }
