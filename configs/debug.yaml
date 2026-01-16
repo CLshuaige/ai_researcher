@@ -11,10 +11,13 @@ model:
     temperature: 0.7
     #top_p: 0.9
     #repetition_penalty: 1.1
+  api_settings:
+    base_url: "http://localhost:8001/v1"
+    api_key: "EMPTY"
 
 # Workspace Settings
 workspace:
-  base_dir: "/home/ai_researcher/projects/ai_researcher/workspace
+  base_dir: "/home/ai_researcher/projects/ai_researcher/workspace"
 
 # Researcher Settings
 researcher:

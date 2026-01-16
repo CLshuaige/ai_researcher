@@ -2,7 +2,7 @@ from typing import Dict, Any
 
 from researcher.state import ResearchState
 from researcher.schemas import ExperimentResult
-from researcher.config import config
+#from researcher.config import config
 from researcher.utils import save_markdown, log_stage, get_artifact_path
 from researcher.exceptions import WorkflowError
 

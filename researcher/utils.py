@@ -3,7 +3,7 @@ from typing import Optional, Any, Dict
 from datetime import datetime
 import json
 
-from researcher.config import config
+#from researcher.config import config
 from researcher.exceptions import WorkflowError
 
 
@@ -81,16 +81,39 @@ def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional
 
 
 def get_llm_config() -> Dict[str, Any]:
-    """Get standard LLM configuration for autogen"""
-    llm_config: Dict[str, Any] = {
-        "model": config.model.model_name,
-        "api_key": config.model.api_key,
-        "temperature": config.model.temperature,
-        "max_tokens": config.model.max_tokens,
-    }
-    if config.model.base_url:
-        llm_config["base_url"] = config.model.base_url
-    return llm_config
+    """Get standard LLM configuration for autogen
+    Load LLM configuration from json file"""
+    import json
+
+    config_path = Path(__file__).parent.parent / "configs" / "llm_config.json"
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+            # print(f"Loaded LLM config from {config_path}")
+            # print(f"LLM Config: {config_data}")
+            return config_data
+
+def load_global_config(config_path: Path) -> Dict[str, Any]:
+    """Load global configuration from yaml file"""
+    import yaml
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config_data = yaml.safe_load(f)
+            # print(f"Loaded global config from {config_path}")
+            # print(f"Global Config: {config_data}")
+            return config_data
+    except Exception as e:
+        raise WorkflowError(f"Failed to load global config: {str(e)}")
+
+
+
+def update_llm_config(llm_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Update LLM configuration with new settings"""
+    updated_config = llm_config.copy()
+    for key, value in new_config.items():
+        if value is not None:
+            updated_config[key] = value
+    return updated_config
 
 
 def parse_json_from_response(response: str) -> Dict[str, Any]:

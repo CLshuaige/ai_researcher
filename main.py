@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 from researcher.researcher import AIResearcher
-from researcher.utils import load_config_yaml
+from researcher.utils import load_global_config
 
 
 def main():
@@ -61,11 +61,11 @@ def main():
         input_text = None
         input_file = input_path
     else:
-        input_text = args.input or "Default research task"
+        input_text = args.input or "Define a novel research problem in AI."
         input_file = None
 
     # Load configuration YAML
-    config = load_config_yaml(Path(args.config))
+    config = load_global_config(Path(args.config))
 
     # Initialize and run researcher
     researcher = AIResearcher(

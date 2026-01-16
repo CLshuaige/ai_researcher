@@ -32,7 +32,12 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         search_prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
         searcher = LiteratureSearcherAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
+        user_proxy = UserProxyAgent(name="user_proxy", 
+                                    human_input_mode="NEVER",
+                                    max_consecutive_auto_reply=0,
+                                    code_execution_config={
+                                        "use_docker": False,
+                                    })
 
         log_stage(workspace_dir, "literature_review", "Generating search keywords")
         user_proxy.initiate_chat(searcher, message=search_prompt)

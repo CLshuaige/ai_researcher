@@ -1,5 +1,5 @@
 from researcher.researcher import AIResearcher
-from researcher.config import config
+#from researcher.config import config
 from researcher.schemas import (
     ResearchIdea,
     ExperimentalMethod,
@@ -11,7 +11,7 @@ from researcher.schemas import (
 __version__ = "0.1.0"
 __all__ = [
     "AIResearcher",
-    "config",
+    #"config",
     "ResearchIdea",
     "ExperimentalMethod",
     "ExperimentResult",
