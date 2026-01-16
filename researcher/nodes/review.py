@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from autogen import UserProxyAgent
+from autogen import GroupChat, GroupChatManager, UserProxyAgent
 
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
@@ -39,10 +39,23 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         prompt = REVIEW_PROMPT.format(paper=paper)
 
         reviewer = ReviewerAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
+        user_proxy = UserProxyAgent(
+            name="user_proxy",
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=0,
+            code_execution_config=False
+        )
 
         log_stage(workspace_dir, "review", "Generating review")
-        user_proxy.initiate_chat(reviewer, message=prompt)
+
+        groupchat = GroupChat(
+            agents=[user_proxy, reviewer],
+            messages=[],
+            max_round=1,
+            speaker_selection_method="round_robin"
+        )
+        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
+        user_proxy.initiate_chat(manager, message=prompt)
 
         review_text = user_proxy.last_message()["content"]
 
@@ -50,10 +63,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="review",
-            messages=[
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": review_text}
-            ],
+            messages=groupchat.messages,
             agent_chat_messages=reviewer.chat_messages
         )
 

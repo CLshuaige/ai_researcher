@@ -23,7 +23,7 @@ workspace:
 researcher:
   task_parsing:
     mode: "basic"
-    human_in_the_loop: false
+    human_in_the_loop: true
     max_iterations: 3
   literature_review:
     mode: "basic"

@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from autogen import UserProxyAgent
+from autogen import GroupChat, GroupChatManager, UserProxyAgent
 
 from researcher.state import ResearchState
 from researcher.agents import AskerAgent, TaskFormatterAgent
@@ -12,6 +12,7 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     save_agent_history,
+    load_global_config,
 )
 from researcher.exceptions import WorkflowError
 
@@ -26,65 +27,95 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         if not input_text:
             raise WorkflowError("Input file not found")
 
+        global_config = load_global_config()
+        task_parsing_config = global_config.get("researcher", {}).get("task_parsing", {})
+        enable_hitl = task_parsing_config.get("human_in_the_loop", False)
+        max_iterations = task_parsing_config.get("max_iterations", 3)
+
         llm_config = get_llm_config()
 
-        # Check if human feedback is already provided (continuing from interrupt)
-        human_feedback = state.get("human_feedback")
+        asker = AskerAgent().create_assistant(llm_config)
+        formatter = TaskFormatterAgent().create_assistant(llm_config)
 
-        if human_feedback:
-            # Human has provided answers, format the final task
-            log_stage(workspace_dir, "task_parsing", "Processing human feedback")
-            task = _format_task_with_feedback(input_text, human_feedback, llm_config, workspace_dir)
-        else:
-            # First pass: check if clarification is needed
-            asker = AskerAgent().create_assistant(llm_config)
-            user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
-
-            prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
-            user_proxy.initiate_chat(asker, message=prompt)
-
-            response = user_proxy.last_message()["content"]
-
-            save_agent_history(
-                workspace_dir=workspace_dir,
-                node_name="task_parsing",
-                messages=[{"role": "user", "content": prompt}, {"role": "assistant", "content": response}],
-                agent_chat_messages=asker.chat_messages
+        # Determine whether to use human in the loop
+        if enable_hitl:
+            user_proxy = UserProxyAgent(
+                name="human",
+                human_input_mode="ALWAYS",
+                max_consecutive_auto_reply=0,
+                code_execution_config=False
             )
+            log_stage(workspace_dir, "task_parsing", "Human-in-the-loop enabled")
+        else:
+            user_proxy = UserProxyAgent(
+                name="auto_proxy",
+                human_input_mode="NEVER",
+                max_consecutive_auto_reply=0,
+                code_execution_config=False
+            )
+            log_stage(workspace_dir, "task_parsing", "Auto mode (no human input)")
 
-            if response.startswith("CLEAR:"):
-                # Task is clear, extract and save
-                task = response.replace("CLEAR:", "").strip()
-                log_stage(workspace_dir, "task_parsing", "Task is clear, no clarification needed")
-            elif response.startswith("UNCLEAR:"):
-                # Task needs clarification, prepare questions for human
-                questions = response.replace("UNCLEAR:", "").strip()
-                log_stage(workspace_dir, "task_parsing", "Task needs clarification, waiting for human input")
+        # Phase 1: Asker analyzes input and asks clarifying questions
+        groupchat = GroupChat(
+            agents=[user_proxy, asker],
+            messages=[],
+            max_round=max_iterations,
+            speaker_selection_method="round_robin"
+        )
 
-                # Store questions in human_feedback for the interrupt
-                return {
-                    "task": None,
-                    "stage": "task_parsing",
-                    "human_feedback": {
-                        "type": "clarification",
-                        "questions": questions,
-                        "original_input": input_text
-                    }
-                }
-            else:
-                # Fallback: use input as-is
-                task = input_text
-                log_stage(workspace_dir, "task_parsing", "Unable to parse response, using input as-is")
+        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
+        prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
+        user_proxy.initiate_chat(manager, message=prompt)
+
+        conversation_history = _extract_conversation(groupchat.messages)
+
+        # Phase 2: Formatter generates final task description
+        # Use a separate user_proxy with NEVER mode for formatting (no human input needed)
+        formatter_proxy = UserProxyAgent(
+            name="formatter_proxy",
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=0,
+            code_execution_config=False
+        )
+
+        formatter_prompt = f"""Based on the following conversation, format a clear and comprehensive research task description:
+
+Original Input:
+{input_text}
+
+Conversation History:
+{conversation_history}
+
+Provide a well-structured task description that incorporates all clarifications."""
+
+        groupchat_format = GroupChat(
+            agents=[formatter_proxy, formatter],
+            messages=[],
+            max_round=1,
+            speaker_selection_method="round_robin"
+        )
+        manager_format = GroupChatManager(groupchat=groupchat_format, llm_config=llm_config)
+        formatter_proxy.initiate_chat(manager_format, message=formatter_prompt)
+        task = formatter_proxy.last_message()["content"]
 
         task_path = get_artifact_path(workspace_dir, "task")
         save_markdown(task, task_path)
+
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="task_parsing",
+            messages=groupchat.messages + groupchat_format.messages,
+            agent_chat_messages={
+                asker.name: asker.chat_messages,
+                formatter.name: formatter.chat_messages
+            }
+        )
 
         log_stage(workspace_dir, "task_parsing", "Task parsing completed")
 
         return {
             "task": task,
-            "stage": "task_parsing",
-            "human_feedback": None  # Clear feedback after processing
+            "stage": "task_parsing"
         }
 
     except Exception as e:
@@ -92,40 +123,12 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         raise WorkflowError(f"Task parsing failed: {str(e)}")
 
 
-def _format_task_with_feedback(
-    input_text: str,
-    human_feedback: Dict[str, Any],
-    llm_config: Dict[str, Any],
-    workspace_dir
-) -> str:
-    """Format final task using human feedback"""
-    questions = human_feedback.get("questions", "")
-    answers = human_feedback.get("answers", "")
-
-    formatter = TaskFormatterAgent().create_assistant(llm_config)
-    user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
-
-    prompt = f"""Format the following research task based on the original input and clarifications:
-
-Original Input:
-{input_text}
-
-Questions Asked:
-{questions}
-
-User Answers:
-{answers}
-
-Provide a clear, comprehensive task description that incorporates all information."""
-
-    user_proxy.initiate_chat(formatter, message=prompt)
-    task = user_proxy.last_message()["content"]
-
-    save_agent_history(
-        workspace_dir=workspace_dir,
-        node_name="task_parsing",
-        messages=[{"role": "user", "content": prompt}, {"role": "assistant", "content": task}],
-        agent_chat_messages=formatter.chat_messages
-    )
-
-    return task
+def _extract_conversation(messages: list) -> str:
+    """Extract conversation history as formatted text"""
+    conversation = []
+    for msg in messages:
+        if isinstance(msg, dict) and "content" in msg and "name" in msg:
+            role = msg["name"]
+            content = msg["content"]
+            conversation.append(f"[{role}]: {content}")
+    return "\n\n".join(conversation)

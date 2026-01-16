@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from autogen import UserProxyAgent
+from autogen import GroupChat, GroupChatManager, UserProxyAgent
 
 from researcher.state import ResearchState
 from researcher.agents import WriterAgent
@@ -39,10 +39,23 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         )
 
         writer = WriterAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
+        user_proxy = UserProxyAgent(
+            name="user_proxy",
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=0,
+            code_execution_config=False
+        )
 
         log_stage(workspace_dir, "report_generation", "Generating paper")
-        user_proxy.initiate_chat(writer, message=prompt)
+
+        groupchat = GroupChat(
+            agents=[user_proxy, writer],
+            messages=[],
+            max_round=1,
+            speaker_selection_method="round_robin"
+        )
+        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
+        user_proxy.initiate_chat(manager, message=prompt)
 
         paper = user_proxy.last_message()["content"]
 
@@ -50,10 +63,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="report_generation",
-            messages=[
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": paper}
-            ],
+            messages=groupchat.messages,
             agent_chat_messages=writer.chat_messages
         )
 

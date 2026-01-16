@@ -1,6 +1,6 @@
 """Global state definition for LangGraph workflow."""
 
-from typing import TypedDict, Optional, Dict, Any
+from typing import TypedDict, Optional
 from pathlib import Path
 
 from researcher.schemas import (
@@ -21,7 +21,6 @@ class ResearchState(TypedDict):
     # Input
     input_text: str
     task: Optional[str]
-    config: Optional[dict]
 
     # Research artifacts (structured objects passed between nodes)
     literature: Optional[LiteratureReview]
@@ -39,8 +38,5 @@ class ResearchState(TypedDict):
     stage: str
     error: Optional[str]
 
-    # Session and history management
+    # Session management
     session_id: str
-
-    # Human-in-the-loop
-    human_feedback: Optional[Dict[str, Any]]

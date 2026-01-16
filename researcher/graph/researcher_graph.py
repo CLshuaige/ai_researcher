@@ -19,12 +19,8 @@ from researcher.nodes import (
 )
 
 
-def build_researcher_graph(enable_human_in_loop: bool = False) -> StateGraph:
-    """Build the main research workflow graph
-
-    Args:
-        enable_human_in_loop: If True, add interrupt after task_parsing for human feedback
-    """
+def build_researcher_graph() -> StateGraph:
+    """Build the main research workflow graph"""
     workflow = StateGraph(ResearchState)
 
     # Define nodes
@@ -48,8 +44,6 @@ def build_researcher_graph(enable_human_in_loop: bool = False) -> StateGraph:
     workflow.add_edge("report_generation"   , "review")
     workflow.add_edge("review"              , END)
 
-    # Compile with checkpointer and optional interrupt
+    # Compile with checkpointer
     checkpointer = MemorySaver()
-    interrupt_after = ["task_parsing"] if enable_human_in_loop else None
-
-    return workflow.compile(checkpointer=checkpointer, interrupt_after=interrupt_after)
+    return workflow.compile(checkpointer=checkpointer)
