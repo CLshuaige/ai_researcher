@@ -13,6 +13,7 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     parse_json_from_response,
+    save_agent_history,
 )
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
 from researcher.exceptions import WorkflowError
@@ -57,6 +58,22 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         log_stage(workspace_dir, "literature_review", "Synthesizing literature")
         synthesis = user_proxy.last_message()["content"]
+
+        # Save AG2 history
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="literature_review",
+            messages=[
+                {"role": "user", "content": search_prompt},
+                {"role": "assistant", "content": search_response},
+                {"role": "user", "content": summary_prompt},
+                {"role": "assistant", "content": synthesis}
+            ],
+            agent_chat_messages={
+                searcher.name: searcher.chat_messages,
+                summarizer.name: summarizer.chat_messages
+            }
+        )
 
         literature = LiteratureReview(items=literature_items, synthesis=synthesis)
 

@@ -14,6 +14,7 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     parse_json_from_response,
+    save_agent_history,
 )
 from researcher.prompts.templates import IDEA_PROPOSAL_PROMPT, IDEA_FORMATTER_PROMPT
 from researcher.exceptions import WorkflowError
@@ -52,6 +53,17 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
 
         debate_history = _extract_history(groupchat.messages)
         _save_log(workspace_dir, debate_history, "idea_debate")
+
+        # Save complete AG2 history
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="hypothesis_construction",
+            messages=groupchat.messages,
+            agent_chat_messages={
+                proposer.name: proposer.chat_messages,
+                critic.name: critic.chat_messages
+            }
+        )
 
         log_stage(workspace_dir, "hypothesis_construction", "Formatting and evaluating ideas")
         formatted_output = _format_output(debate_history, llm_config)

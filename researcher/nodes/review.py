@@ -11,6 +11,7 @@ from researcher.utils import (
     get_artifact_path,
     load_artifact_from_file,
     get_llm_config,
+    save_agent_history,
 )
 from researcher.prompts.templates import REVIEW_PROMPT
 from researcher.exceptions import WorkflowError
@@ -44,6 +45,17 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         user_proxy.initiate_chat(reviewer, message=prompt)
 
         review_text = user_proxy.last_message()["content"]
+
+        # Save AG2 history
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="review",
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": review_text}
+            ],
+            agent_chat_messages=reviewer.chat_messages
+        )
 
         referee = _parse_review(review_text)
 

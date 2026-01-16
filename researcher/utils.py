@@ -129,3 +129,50 @@ def parse_json_from_response(response: str) -> Dict[str, Any]:
     except json.JSONDecodeError as e:
         raise WorkflowError(f"Failed to parse JSON: {str(e)}\nResponse: {response}")
 
+
+def save_agent_history(
+    workspace_dir: Path,
+    node_name: str,
+    messages: list,
+    agent_chat_messages: Optional[Dict] = None
+) -> None:
+    """Save AG2 agent conversation history
+
+    Args:
+        workspace_dir: Project workspace directory
+        node_name: Name of the node (e.g., 'hypothesis_construction')
+        messages: GroupChat messages or single agent messages
+        agent_chat_messages: Optional dict of agent.chat_messages
+    """
+    history_dir = workspace_dir / "history" / node_name
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = history_dir / f"{timestamp}.json"
+
+    history_data = {
+        "timestamp": datetime.now().isoformat(),
+        "node": node_name,
+        "messages": messages,
+    }
+
+    if agent_chat_messages:
+        # Convert agent names to strings for JSON serialization
+        history_data["agent_chat_messages"] = {
+            str(k): v for k, v in agent_chat_messages.items()
+        }
+
+    save_json(history_data, filepath)
+
+
+def save_session_metadata(workspace_dir: Path, session_data: Dict[str, Any]) -> None:
+    """Save session metadata to workspace"""
+    session_file = workspace_dir / "session.json"
+    save_json(session_data, session_file)
+
+
+def load_session_metadata(workspace_dir: Path) -> Optional[Dict[str, Any]]:
+    """Load session metadata from workspace"""
+    session_file = workspace_dir / "session.json"
+    return load_json(session_file)
+

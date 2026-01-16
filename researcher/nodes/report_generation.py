@@ -10,6 +10,7 @@ from researcher.utils import (
     get_artifact_path,
     load_artifact_from_file,
     get_llm_config,
+    save_agent_history,
 )
 from researcher.prompts.templates import PAPER_WRITING_PROMPT
 from researcher.exceptions import WorkflowError
@@ -44,6 +45,17 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         user_proxy.initiate_chat(writer, message=prompt)
 
         paper = user_proxy.last_message()["content"]
+
+        # Save AG2 history
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="report_generation",
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": paper}
+            ],
+            agent_chat_messages=writer.chat_messages
+        )
 
         paper_path = get_artifact_path(workspace_dir, "paper")
         save_markdown(paper, paper_path.with_suffix('.md'))
