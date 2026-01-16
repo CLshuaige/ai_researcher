@@ -1,18 +1,25 @@
 from typing import Dict, Any, List
-import json
+
+from autogen import UserProxyAgent
 
 from researcher.state import ResearchState
 from researcher.schemas import LiteratureReview, LiteratureItem
-from researcher.agents import SearcherAgent, SummarizerAgent
-from researcher.config import get_model_config
-from researcher.utils import save_markdown, save_json, log_stage, get_artifact_path, load_artifact_from_file
+from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent
+from researcher.utils import (
+    save_markdown,
+    save_json,
+    log_stage,
+    get_artifact_path,
+    load_artifact_from_file,
+    get_llm_config,
+    parse_json_from_response,
+)
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
-from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
 
 
 def literature_review_node(state: ResearchState) -> Dict[str, Any]:
-    """Conduct literature review through sequential agent calls"""
+    """Conduct literature review"""
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "literature_review", "Starting literature review")
 
@@ -21,20 +28,17 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         if not task:
             raise WorkflowError("Task file not found")
 
-        searcher = SearcherAgent()
-        summarizer = SummarizerAgent()
-        llm_client = get_llm_client(get_model_config())
+        llm_config = get_llm_config()
 
         search_prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
-        search_messages = [
-            {"role": "system", "content": searcher.system_prompt},
-            {"role": "user", "content": search_prompt}
-        ]
+        searcher = LiteratureSearcherAgent().create_assistant(llm_config)
+        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
 
         log_stage(workspace_dir, "literature_review", "Generating search keywords")
-        search_response = llm_client.generate(search_messages)
+        user_proxy.initiate_chat(searcher, message=search_prompt)
+        search_response = user_proxy.last_message()["content"]
 
-        keywords_data = _parse_json_response(search_response)
+        keywords_data = parse_json_from_response(search_response)
         keywords = keywords_data.get("keywords", [])
         queries = keywords_data.get("queries", [])
 
@@ -42,22 +46,14 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         literature_items, papers_text = _fetch_papers(queries, keywords, workspace_dir)
 
-        summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
-            papers=papers_text,
-            task=task
-        )
-        summary_messages = [
-            {"role": "system", "content": summarizer.system_prompt},
-            {"role": "user", "content": summary_prompt}
-        ]
+        summary_prompt = LITERATURE_SUMMARY_PROMPT.format(papers=papers_text, task=task)
+        summarizer = LiteratureSummarizerAgent().create_assistant(llm_config)
+        user_proxy.initiate_chat(summarizer, message=summary_prompt)
 
         log_stage(workspace_dir, "literature_review", "Synthesizing literature")
-        synthesis = llm_client.generate(summary_messages)
+        synthesis = user_proxy.last_message()["content"]
 
-        literature = LiteratureReview(
-            items=literature_items,
-            synthesis=synthesis
-        )
+        literature = LiteratureReview(items=literature_items, synthesis=synthesis)
 
         lit_dir = workspace_dir / "literature"
         lit_dir.mkdir(exist_ok=True)
@@ -68,31 +64,13 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         papers_json_path = lit_dir / "papers.json"
         save_json([item.model_dump() for item in literature_items], papers_json_path)
 
-        log_stage(workspace_dir, "literature_review", f"Literature review completed. Found {len(literature_items)} papers")
+        log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 
-        return {
-            "task": task,
-            "literature": literature,
-            "stage": "literature_review"
-        }
+        return {"task": task, "literature": literature, "stage": "literature_review"}
 
     except Exception as e:
         log_stage(workspace_dir, "literature_review", f"Error: {str(e)}")
         raise WorkflowError(f"Literature review failed: {str(e)}")
-
-
-def _parse_json_response(response: str) -> Dict[str, Any]:
-    """Extract JSON from LLM response"""
-    try:
-        if "```json" in response:
-            json_str = response.split("```json")[1].split("```")[0].strip()
-        elif "```" in response:
-            json_str = response.split("```")[1].split("```")[0].strip()
-        else:
-            json_str = response.strip()
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        return {}
 
 
 def _fetch_papers(queries: List[str], keywords: List[str], workspace_dir=None) -> tuple[List[LiteratureItem], str]:
@@ -155,7 +133,7 @@ def _fetch_papers(queries: List[str], keywords: List[str], workspace_dir=None) -
                             "pdf_file": pdf_filename,
                             "url": result.entry_id
                         })
-                    except Exception as e:
+                    except Exception:
                         # Continue even if PDF download fails
                         pass
 

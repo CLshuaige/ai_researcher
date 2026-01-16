@@ -1,11 +1,17 @@
 from typing import Dict, Any
 
+from autogen import UserProxyAgent
+
 from researcher.state import ResearchState
 from researcher.agents import WriterAgent
-from researcher.config import get_model_config
-from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
+from researcher.utils import (
+    save_markdown,
+    log_stage,
+    get_artifact_path,
+    load_artifact_from_file,
+    get_llm_config,
+)
 from researcher.prompts.templates import PAPER_WRITING_PROMPT
-from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
 
 
@@ -21,8 +27,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         method_overview = load_artifact_from_file(workspace_dir, "method") or ""
         results_summary = load_artifact_from_file(workspace_dir, "results") or ""
 
-        writer = WriterAgent()
-        llm_client = get_llm_client(get_model_config())
+        llm_config = get_llm_config()
 
         prompt = PAPER_WRITING_PROMPT.format(
             task=task,
@@ -32,18 +37,18 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             results=results_summary
         )
 
-        messages = [
-            {"role": "system", "content": writer.system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        writer = WriterAgent().create_assistant(llm_config)
+        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
 
         log_stage(workspace_dir, "report_generation", "Generating paper")
-        paper = llm_client.generate(messages)
+        user_proxy.initiate_chat(writer, message=prompt)
+
+        paper = user_proxy.last_message()["content"]
 
         paper_path = get_artifact_path(workspace_dir, "paper")
         save_markdown(paper, paper_path.with_suffix('.md'))
 
-        log_stage(workspace_dir, "report_generation", "Report generation completed")
+        log_stage(workspace_dir, "report_generation", "Completed")
 
         return {
             "task": task,
