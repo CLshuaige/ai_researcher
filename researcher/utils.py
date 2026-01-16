@@ -1,7 +1,10 @@
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from datetime import datetime
 import json
+
+from researcher.config import config
+from researcher.exceptions import WorkflowError
 
 
 def save_markdown(content: str, filepath: Path) -> None:
@@ -76,11 +79,30 @@ def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional
     artifact_path = get_artifact_path(workspace_dir, artifact_type)
     return load_markdown(artifact_path)
 
-def load_config_yaml(config_path: Path) -> dict:
-    """Load configuration from YAML file"""
-    import yaml
-    if not config_path.exists():
-        return {}
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+
+def get_llm_config() -> Dict[str, Any]:
+    """Get standard LLM configuration for autogen"""
+    llm_config: Dict[str, Any] = {
+        "model": config.model.model_name,
+        "api_key": config.model.api_key,
+        "temperature": config.model.temperature,
+        "max_tokens": config.model.max_tokens,
+    }
+    if config.model.base_url:
+        llm_config["base_url"] = config.model.base_url
+    return llm_config
+
+
+def parse_json_from_response(response: str) -> Dict[str, Any]:
+    """Extract and parse JSON from LLM response"""
+    try:
+        if "```json" in response:
+            json_str = response.split("```json")[1].split("```")[0].strip()
+        elif "```" in response:
+            json_str = response.split("```")[1].split("```")[0].strip()
+        else:
+            json_str = response.strip()
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise WorkflowError(f"Failed to parse JSON: {str(e)}\nResponse: {response}")
 

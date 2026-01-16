@@ -59,14 +59,13 @@ class AIResearcher:
         self.graph = build_researcher_graph()
         self.current_state: Optional[ResearchState] = None
 
-    def run(self, input_text: str, input_file: Optional[Path] = None, config: Optional[dict] = None) -> ResearchState:
+    def run(self, input_text: str, input_file: Optional[Path] = None) -> ResearchState:
         """
         Execute the complete research workflow
 
         Args:
             input_text: Initial research prompt or task description
             input_file: Optional path to input.md file
-            config: Optional configuration dictionary
 
         Returns:
             Final research state with all artifacts
@@ -82,7 +81,6 @@ class AIResearcher:
 
         initial_state: ResearchState = {
             "input_text": input_text,
-            "config": config,
             "task": None,
             "literature": None,
             "idea": None,

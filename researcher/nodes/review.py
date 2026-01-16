@@ -1,17 +1,23 @@
 from typing import Dict, Any
 
+from autogen import UserProxyAgent
+
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
 from researcher.agents import ReviewerAgent
-from researcher.config import get_model_config
-from researcher.utils import save_markdown, log_stage, get_artifact_path, load_artifact_from_file
+from researcher.utils import (
+    save_markdown,
+    log_stage,
+    get_artifact_path,
+    load_artifact_from_file,
+    get_llm_config,
+)
 from researcher.prompts.templates import REVIEW_PROMPT
-from researcher.llm import get_llm_client
 from researcher.exceptions import WorkflowError
 
 
 def review_node(state: ResearchState) -> Dict[str, Any]:
-    """Review research paper following ICML standards"""
+    """Review research paper"""
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "review", "Starting review")
 
@@ -27,25 +33,24 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         if not paper:
             raise WorkflowError("Paper file not found")
 
-        reviewer = ReviewerAgent()
-        llm_client = get_llm_client(get_model_config())
+        llm_config = get_llm_config()
 
         prompt = REVIEW_PROMPT.format(paper=paper)
 
-        messages = [
-            {"role": "system", "content": reviewer.system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        reviewer = ReviewerAgent().create_assistant(llm_config)
+        user_proxy = UserProxyAgent(name="user_proxy", human_input_mode="NEVER", max_consecutive_auto_reply=0)
 
         log_stage(workspace_dir, "review", "Generating review")
-        review_text = llm_client.generate(messages)
+        user_proxy.initiate_chat(reviewer, message=prompt)
+
+        review_text = user_proxy.last_message()["content"]
 
         referee = _parse_review(review_text)
 
         referee_path = get_artifact_path(workspace_dir, "referee")
         save_markdown(referee.to_markdown(), referee_path)
 
-        log_stage(workspace_dir, "review", f"Review completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
+        log_stage(workspace_dir, "review", f"Completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
 
         return {
             "task": load_artifact_from_file(workspace_dir, "task"),
