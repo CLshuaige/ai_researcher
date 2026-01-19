@@ -146,6 +146,33 @@ def parse_json_from_response(response: str) -> Dict[str, Any]:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
         raise WorkflowError(f"Failed to parse JSON: {str(e)}\nResponse: {response}")
+    
+def serialize_groupchat_messages(agent_chat_messages) -> dict:
+    result = {}
+
+    for manager, messages in agent_chat_messages.items():
+        manager_name = getattr(manager, "name", "GroupChatManager")
+
+        # 关键修复点：messages 不是 list，而是 dict
+        flattened_messages = []
+
+        if isinstance(messages, dict):
+            for _, msg_list in messages.items():
+                flattened_messages.extend(msg_list)
+        else:
+            flattened_messages = messages
+
+        result[manager_name] = [
+            {
+                "role": m.get("role"),
+                "name": m.get("name"),
+                "content": m.get("content"),
+            }
+            for m in flattened_messages
+        ]
+
+    return result
+
 
 
 def save_agent_history(
@@ -176,9 +203,7 @@ def save_agent_history(
 
     if agent_chat_messages:
         # Convert agent names to strings for JSON serialization
-        history_data["agent_chat_messages"] = {
-            str(k): v for k, v in agent_chat_messages.items()
-        }
+        history_data["agent_chat_messages"] = serialize_groupchat_messages(agent_chat_messages)
 
     save_json(history_data, filepath)
 

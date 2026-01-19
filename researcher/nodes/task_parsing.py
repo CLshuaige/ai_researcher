@@ -55,24 +55,45 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
                 human_input_mode="ALWAYS"
             )
             
-            def increment_clarification_count(context_variables: ContextVariables) -> FunctionTargetResult:
-                current_count = context_variables.get("clarification_count", 0)
-                context_variables["clarification_count"] = current_count + 1
+            def asker_after_work(output: Any, ctx: ContextVariables) -> FunctionTargetResult:
+                content = str(output)
+
+                current_count = ctx.get("clarification_count", 0)
+                max_iter = ctx.get("max_iterations", 0)
+                
+                current_count += 1
+                ctx["clarification_count"] = current_count
+
+                if "CLEAR:" in content and "UNCLEAR:" not in content:
+                    return FunctionTargetResult(
+                        target=AgentTarget(formatter),
+                        context_variables=ctx
+                    )
+                
+                if current_count >= max_iter:
+                    return FunctionTargetResult(
+                        target=AgentTarget(formatter),
+                        context_variables=ctx
+                    )
+
                 return FunctionTargetResult(
-                    target=AgentTarget(asker),
-                    context_variables=context_variables
+                    target=AgentTarget(user),
+                    context_variables=ctx
                 )
             
             agents_list = [asker, formatter, user]
             user_agent = user
-            initial_context = ContextVariables(
-                clarification_count=0,
-                max_iterations=max_iterations
+            initial_context = ContextVariables(data={
+                    "clarification_count": 0,
+                    "max_iterations": max_iterations
+                }
             )
         else:
             agents_list = [asker, formatter]
             user_agent = None
-            initial_context = None
+            initial_context = ContextVariables()
+
+        
 
         pattern = DefaultPattern(
             initial_agent=asker,
@@ -83,37 +104,8 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         )
 
         if enable_hitl:
-            asker.handoffs.add_llm_conditions([
-                OnCondition(
-                    target=AgentTarget(user),
-                    condition=StringLLMCondition(
-                        prompt="""Transfer to User when you need to ask clarifying questions:
-- The research task is ambiguous or incomplete
-- Critical information is missing (objectives, scope, constraints, resources)
-- You need user input to better understand the requirements
-- Further clarification is needed before proceeding"""
-                    ),
-                ),
-                OnCondition(
-                    target=AgentTarget(formatter),
-                    condition=StringLLMCondition(
-                        prompt="""Transfer to Formatter when the task is clear and no more clarification is needed:
-- The research task is clearly defined with specific objectives
-- All necessary information (scope, constraints, resources) is available
-- You have gathered sufficient information from the user (or no clarification was needed)
-- The task is ready to be formatted and finalized"""
-                    ),
-                ),
-            ])
-            asker.handoffs.add_context_conditions([
-                OnContextCondition(
-                    target=AgentTarget(formatter),
-                    condition=ExpressionContextCondition(
-                        expression=ContextExpression("${clarification_count} >= ${max_iterations}")
-                    )
-                ),
-            ])
-            user.handoffs.set_after_work(FunctionTarget(increment_clarification_count))
+            user.handoffs.set_after_work(AgentTarget(asker))
+            asker.handoffs.set_after_work(FunctionTarget(asker_after_work))
         else:
             asker.handoffs.set_after_work(AgentTarget(formatter))
 
@@ -131,7 +123,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
         # Extract task from formatter's last message
         task = None
-        for msg in reversed(result.messages):
+        for msg in reversed(result.chat_history):
             if msg.get("name") == formatter.name and msg.get("content"):
                 task = msg["content"]
                 break
@@ -145,12 +137,13 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="task_parsing",
-            messages=result.messages,
+            messages=result.chat_history,
             agent_chat_messages={
                 asker.name: asker.chat_messages,
                 formatter.name: formatter.chat_messages
             }
         )
+
 
         log_stage(workspace_dir, "task_parsing", "Completed")
         return {"task": task, "stage": "task_parsing"}
