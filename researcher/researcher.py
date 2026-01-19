@@ -1,11 +1,19 @@
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 import time
 
 from researcher.config import get_workspace_dir, update_model_config
 from researcher.state import ResearchState
 from researcher.graph.researcher_graph import build_researcher_graph
-from researcher.utils import initialize_workspace, save_markdown, load_markdown, get_artifact_path
+from researcher.utils import (
+    initialize_workspace,
+    save_markdown,
+    load_markdown,
+    get_artifact_path,
+    save_session_metadata,
+    load_session_metadata,
+)
 from researcher.schemas import ResearchIdea, ExperimentalMethod, ExperimentResult, ReviewReport
 
 
@@ -21,8 +29,6 @@ class AIResearcher:
         workspace_dir: Optional custom workspace directory
         clear_workspace: Whether to clear existing workspace on initialization
         model_preset: Optional model preset name from registry
-            (e.g., "openai-gpt4o", "qwen-30b-local"). If None, uses the
-            default preset from configuration.
     """
 
     def __init__(
@@ -56,8 +62,10 @@ class AIResearcher:
 
         initialize_workspace(self.workspace_dir)
 
+        # Build graph with checkpointer
         self.graph = build_researcher_graph()
         self.current_state: Optional[ResearchState] = None
+        self.session_id: Optional[str] = None
 
     def run(self, input_text: str, input_file: Optional[Path] = None, config: dict = None) -> ResearchState:
         """
@@ -80,6 +88,9 @@ class AIResearcher:
         input_path = get_artifact_path(self.workspace_dir, "input")
         save_markdown(input_text, input_path)
 
+        # Generate session_id from workspace directory name
+        self.session_id = self.workspace_dir.name
+
         initial_state: ResearchState = {
             "input_text": input_text,
             "task": None,
@@ -93,16 +104,36 @@ class AIResearcher:
             "workspace_dir": self.workspace_dir,
             "project_name": self.project_name,
             "stage": "initialization",
-            "error": None
+            "error": None,
+            "session_id": self.session_id,
         }
+
+        # Save session metadata
+        session_data = {
+            "session_id": self.session_id,
+            "project_name": self.project_name,
+            "created_at": datetime.now().isoformat(),
+            "status": "running",
+            "stage": "initialization",
+        }
+        save_session_metadata(self.workspace_dir, session_data)
 
         print(f"Starting research workflow for project: {self.project_name}")
         print(f"Workspace: {self.workspace_dir}")
+        print(f"Session ID: {self.session_id}")
 
-        final_state = self.graph.invoke(initial_state)
+        # Execute workflow with thread_id for checkpointing
+        config = {"configurable": {"thread_id": self.session_id}}
+        final_state = self.graph.invoke(initial_state, config=config)
 
         # Store state
         self.current_state = final_state
+
+        # Update session metadata
+        session_data["status"] = "completed" if not final_state.get("error") else "failed"
+        session_data["stage"] = final_state["stage"]
+        session_data["completed_at"] = datetime.now().isoformat()
+        save_session_metadata(self.workspace_dir, session_data)
 
         # Report completion
         elapsed_time = time.time() - start_time
@@ -182,3 +213,35 @@ class AIResearcher:
                 print(f"  ✓ {artifact}: {path}")
             else:
                 print(f"  ✗ {artifact}: not generated")
+
+    @staticmethod
+    def resume(workspace_dir: Path) -> 'AIResearcher':
+        """Resume a previous research session
+
+        Args:
+            workspace_dir: Path to existing workspace
+
+        Returns:
+            AIResearcher instance with restored session
+        """
+        workspace_dir = Path(workspace_dir)
+        if not workspace_dir.exists():
+            raise ValueError(f"Workspace not found: {workspace_dir}")
+
+        session_data = load_session_metadata(workspace_dir)
+        if not session_data:
+            raise ValueError(f"No session metadata found in {workspace_dir}")
+
+        project_name = session_data.get("project_name", "resumed_project")
+
+        researcher = AIResearcher(
+            project_name=project_name,
+            workspace_dir=workspace_dir
+        )
+
+        researcher.session_id = session_data.get("session_id", workspace_dir.name)
+
+        print(f"Resumed session: {researcher.session_id}")
+        print(f"Last stage: {session_data.get('stage', 'unknown')}")
+
+        return researcher

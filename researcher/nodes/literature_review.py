@@ -1,6 +1,14 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Annotated
+from pathlib import Path
 
-from autogen import UserProxyAgent
+from autogen.agentchat import initiate_group_chat
+from autogen.agentchat.group.patterns import DefaultPattern
+from autogen.agentchat.group import (
+    AgentTarget,
+    FunctionTarget,
+    FunctionTargetResult,
+    RevertToUserTarget,
+)
 
 from researcher.state import ResearchState
 from researcher.schemas import LiteratureReview, LiteratureItem
@@ -12,7 +20,7 @@ from researcher.utils import (
     get_artifact_path,
     load_artifact_from_file,
     get_llm_config,
-    parse_json_from_response,
+    save_agent_history,
 )
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
 from researcher.exceptions import WorkflowError
@@ -28,35 +36,164 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         if not task:
             raise WorkflowError("Task file not found")
 
+        config = state["config"]["researcher"]["literature_review"]
+        num_papers = config["num_papers"]
+
         llm_config = get_llm_config()
 
-        search_prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
-        searcher = LiteratureSearcherAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(name="user_proxy", 
-                                    human_input_mode="NEVER",
-                                    max_consecutive_auto_reply=0,
-                                    code_execution_config={
-                                        "use_docker": False,
-                                    })
+        # Define arxiv search tool
+        def search_arxiv_papers(
+            query: Annotated[str, "Search query for arxiv academic database"],
+            max_results: Annotated[int, "Maximum number of papers to retrieve"] = 5
+        ) -> dict:
+            """Search arxiv for academic papers, download and cache PDFs, return paper metadata"""
+            try:
+                import arxiv
+                from datetime import datetime
 
-        log_stage(workspace_dir, "literature_review", "Generating search keywords")
-        user_proxy.initiate_chat(searcher, message=search_prompt)
-        search_response = user_proxy.last_message()["content"]
+                cache_dir = workspace_dir / "literature" / "arxiv_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
 
-        keywords_data = parse_json_from_response(search_response)
-        keywords = keywords_data.get("keywords", [])
-        queries = keywords_data.get("queries", [])
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                search = arxiv.Search(
+                    query=query,
+                    max_results=max_results,
+                    sort_by=arxiv.SortCriterion.Relevance
+                )
 
-        log_stage(workspace_dir, "literature_review", f"Generated {len(keywords)} keywords, {len(queries)} queries")
+                papers = []
+                papers_text_parts = []
+                cache_metadata = {
+                    "timestamp": timestamp,
+                    "query": query,
+                    "max_results": max_results,
+                    "papers": []
+                }
 
-        literature_items, papers_text = _fetch_papers(queries, keywords, workspace_dir)
+                for result in search.results():
+                    arxiv_id = result.entry_id.split('/')[-1]
+                    paper_data = {
+                        "title": result.title,
+                        "authors": [author.name for author in result.authors],
+                        "abstract": result.summary,
+                        "url": result.entry_id,
+                        "year": result.published.year if result.published else None,
+                        "arxiv_id": arxiv_id
+                    }
+                    papers.append(paper_data)
 
-        summary_prompt = LITERATURE_SUMMARY_PROMPT.format(papers=papers_text, task=task)
-        summarizer = LiteratureSummarizerAgent().create_assistant(llm_config)
-        user_proxy.initiate_chat(summarizer, message=summary_prompt)
+                    papers_text_parts.append(
+                        f"Title: {result.title}\n"
+                        f"Authors: {', '.join([a.name for a in result.authors])}\n"
+                        f"Abstract: {result.summary}\n"
+                    )
 
-        log_stage(workspace_dir, "literature_review", "Synthesizing literature")
-        synthesis = user_proxy.last_message()["content"]
+                    # Cache PDF
+                    pdf_filename = None
+                    try:
+                        pdf_filename = f"{timestamp}_{arxiv_id}.pdf"
+                        result.download_pdf(dirpath=str(cache_dir), filename=pdf_filename)
+                        paper_data["pdf_cached"] = pdf_filename
+                    except Exception:
+                        paper_data["pdf_cached"] = None
+
+                    cache_metadata["papers"].append({
+                        "arxiv_id": arxiv_id,
+                        "title": result.title,
+                        "query": query,
+                        "pdf_file": pdf_filename,
+                        "url": result.entry_id
+                    })
+
+                if cache_metadata["papers"]:
+                    metadata_path = cache_dir / f"{timestamp}_metadata.json"
+                    save_json(cache_metadata, metadata_path)
+
+                # Format papers text
+                papers_text = "\n\n---\n\n".join(papers_text_parts) if papers_text_parts else "No papers found"
+
+                return {
+                    "success": True,
+                    "papers": papers,
+                    "query": query,
+                    "formatted_text": papers_text
+                }
+
+            except ImportError:
+                return {"success": False, "error": "arxiv package not installed"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        searcher = LiteratureSearcherAgent().create_agent(llm_config, functions=[search_arxiv_papers])
+        summarizer = LiteratureSummarizerAgent().create_agent(llm_config)
+
+        pattern = DefaultPattern(
+            initial_agent=searcher,
+            agents=[searcher, summarizer],
+            group_manager_args={"llm_config": llm_config}
+        )
+
+        def format_papers_for_summarizer(context_variables):
+            message = f"""{LITERATURE_SUMMARY_PROMPT.format(
+                papers="Please extract and synthesize the papers from the search results above (look for formatted_text in the tool results).",
+                task=task
+            )}"""
+            
+            return FunctionTargetResult(
+                target=AgentTarget(summarizer),
+                message=message,
+                context_variables=context_variables
+            )
+
+        searcher.handoffs.set_after_work(FunctionTarget(format_papers_for_summarizer))
+        summarizer.handoffs.set_after_work(RevertToUserTarget())
+
+        prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
+
+        result, context, last_agent = initiate_group_chat(
+            pattern=pattern,
+            messages=prompt,
+            max_rounds=10
+        )
+
+        # Extract papers and synthesis from messages
+        literature_items = []
+        synthesis = None
+
+        for msg in result.messages:
+            content = msg.get("content", "")
+
+            if "arxiv_id" in content and isinstance(content, str):
+                try:
+                    import json
+                    data = json.loads(content) if content.startswith("{") else None
+                    if data and data.get("success") and "papers" in data:
+                        for paper in data["papers"]:
+                            literature_items.append(LiteratureItem(
+                                title=paper.get("title", ""),
+                                authors=paper.get("authors", []),
+                                abstract=paper.get("abstract", ""),
+                                url=paper.get("url", ""),
+                                year=paper.get("year")
+                            ))
+                except:
+                    pass
+
+            if msg.get("name") == summarizer.name and len(content) > 100:
+                synthesis = content
+
+        if not synthesis:
+            raise WorkflowError("Summarizer did not generate synthesis")
+
+        save_agent_history(
+            workspace_dir=workspace_dir,
+            node_name="literature_review",
+            messages=result.messages,
+            agent_chat_messages={
+                searcher.name: searcher.chat_messages,
+                summarizer.name: summarizer.chat_messages
+            }
+        )
 
         literature = LiteratureReview(items=literature_items, synthesis=synthesis)
 
@@ -76,82 +213,3 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     except Exception as e:
         log_stage(workspace_dir, "literature_review", f"Error: {str(e)}")
         raise WorkflowError(f"Literature review failed: {str(e)}")
-
-
-def _fetch_papers(queries: List[str], keywords: List[str], workspace_dir=None) -> tuple[List[LiteratureItem], str]:
-    """Fetch papers from academic sources and cache them"""
-    literature_items = []
-    papers_text_parts = []
-
-    try:
-        import arxiv
-        from datetime import datetime
-
-        cache_dir = workspace_dir / "literature" / "arxiv_cache" if workspace_dir else None
-        if cache_dir:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        cache_metadata = {
-            "timestamp": timestamp,
-            "queries": queries[:3],
-            "keywords": keywords,
-            "papers": []
-        }
-
-        for query in queries[:3]:
-            search = arxiv.Search(
-                query=query,
-                max_results=5,
-                sort_by=arxiv.SortCriterion.Relevance
-            )
-
-            for result in search.results():
-                arxiv_id = result.entry_id.split('/')[-1]
-
-                item = LiteratureItem(
-                    title=result.title,
-                    authors=[author.name for author in result.authors],
-                    abstract=result.summary,
-                    url=result.entry_id,
-                    year=result.published.year if result.published else None
-                )
-                literature_items.append(item)
-
-                papers_text_parts.append(
-                    f"Title: {result.title}\n"
-                    f"Authors: {', '.join([a.name for a in result.authors])}\n"
-                    f"Abstract: {result.summary}\n"
-                )
-
-                # Cache paper PDF
-                if cache_dir:
-                    try:
-                        pdf_filename = f"{timestamp}_{arxiv_id}.pdf"
-                        pdf_path = cache_dir / pdf_filename
-                        result.download_pdf(dirpath=str(cache_dir), filename=pdf_filename)
-
-                        cache_metadata["papers"].append({
-                            "arxiv_id": arxiv_id,
-                            "title": result.title,
-                            "query": query,
-                            "pdf_file": pdf_filename,
-                            "url": result.entry_id
-                        })
-                    except Exception:
-                        # Continue even if PDF download fails
-                        pass
-
-        # Save cache metadata
-        if cache_dir and cache_metadata["papers"]:
-            metadata_path = cache_dir / f"{timestamp}_metadata.json"
-            save_json(cache_metadata, metadata_path)
-
-        papers_text = "\n\n---\n\n".join(papers_text_parts) if papers_text_parts else "No papers found"
-
-    except ImportError:
-        papers_text = "[TODO: Install arxiv package for literature search]\n\nPlaceholder paper content for synthesis."
-    except Exception as e:
-        papers_text = f"[Error fetching papers: {str(e)}]\n\nPlaceholder paper content for synthesis."
-
-    return literature_items, papers_text

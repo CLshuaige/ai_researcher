@@ -1,7 +1,5 @@
-from typing import Optional, Dict, Any
-from abc import ABC, abstractmethod
-from autogen import AssistantAgent
-from typing import Dict, Any
+from typing import Optional, Dict, Any, List, Callable
+from autogen import ConversableAgent
 
 from researcher.prompts.templates import (
     ASKER_SYSTEM_PROMPT,
@@ -29,13 +27,23 @@ class BaseAgent:
         self.name = name
         self.system_prompt = system_prompt
 
-    def create_assistant(self, llm_config: Dict[str, Any]) -> AssistantAgent:
-        return AssistantAgent(
+    def create_agent(
+        self,
+        llm_config: Dict[str, Any],
+        functions: Optional[List[Callable]] = None
+    ) -> ConversableAgent:
+        agent = ConversableAgent(
             name=self.name,
             system_message=self.system_prompt,
             llm_config=llm_config,
-            human_input_mode="NEVER"
         )
+
+        if functions:
+            for func in functions:
+                agent.register_for_llm()(func)
+                agent.register_for_execution()(func)
+
+        return agent
 
 
 # Task Parsing Module

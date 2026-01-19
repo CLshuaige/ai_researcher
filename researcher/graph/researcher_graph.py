@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 
 from researcher.state import ResearchState
 from researcher.nodes import (
@@ -43,4 +44,6 @@ def build_researcher_graph() -> StateGraph:
     workflow.add_edge("report_generation"   , "review")
     workflow.add_edge("review"              , END)
 
-    return workflow.compile()
+    # Compile with checkpointer
+    checkpointer = MemorySaver()
+    return workflow.compile(checkpointer=checkpointer)

@@ -7,6 +7,16 @@ import json
 from researcher.exceptions import WorkflowError
 
 
+def get_project_root() -> Path:
+    """Get the project root directory"""
+    return Path(__file__).parent.parent
+
+
+def get_default_config_path(config_filename: str = "debug.yaml") -> Path:
+    """Get default path for configuration files"""
+    return get_project_root() / "configs" / config_filename
+
+
 def save_markdown(content: str, filepath: Path) -> None:
     """Save content to markdown file"""
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -80,22 +90,30 @@ def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional
     return load_markdown(artifact_path)
 
 
-def get_llm_config() -> Dict[str, Any]:
+def get_llm_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     """Get standard LLM configuration for autogen
     Load LLM configuration from json file"""
     import json
 
-    config_path = Path(__file__).parent.parent / "configs" / "llm_config.json"
+    if config_path is None:
+        config_path = get_default_config_path("llm_config.json")
+    
     if config_path.exists():
         with open(config_path, 'r', encoding='utf-8') as f:
             config_data = json.load(f)
             # print(f"Loaded LLM config from {config_path}")
             # print(f"LLM Config: {config_data}")
             return config_data
+    else:
+        raise WorkflowError(f"LLM config file not found: {config_path}")
 
-def load_global_config(config_path: Path) -> Dict[str, Any]:
+def load_global_config(config_path: Optional[Path] = None, config_filename: str = "debug.yaml") -> Dict[str, Any]:
     """Load global configuration from yaml file"""
     import yaml
+    
+    if config_path is None:
+        config_path = get_default_config_path(config_filename)
+    
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config_data = yaml.safe_load(f)
@@ -103,7 +121,7 @@ def load_global_config(config_path: Path) -> Dict[str, Any]:
             # print(f"Global Config: {config_data}")
             return config_data
     except Exception as e:
-        raise WorkflowError(f"Failed to load global config: {str(e)}")
+        raise WorkflowError(f"Failed to load global config from {config_path}: {str(e)}")
 
 
 
@@ -128,4 +146,51 @@ def parse_json_from_response(response: str) -> Dict[str, Any]:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
         raise WorkflowError(f"Failed to parse JSON: {str(e)}\nResponse: {response}")
+
+
+def save_agent_history(
+    workspace_dir: Path,
+    node_name: str,
+    messages: list,
+    agent_chat_messages: Optional[Dict] = None
+) -> None:
+    """Save AG2 agent conversation history
+
+    Args:
+        workspace_dir: Project workspace directory
+        node_name: Name of the node (e.g., 'hypothesis_construction')
+        messages: GroupChat messages or single agent messages
+        agent_chat_messages: Optional dict of agent.chat_messages
+    """
+    history_dir = workspace_dir / "history" / node_name
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = history_dir / f"{timestamp}.json"
+
+    history_data = {
+        "timestamp": datetime.now().isoformat(),
+        "node": node_name,
+        "messages": messages,
+    }
+
+    if agent_chat_messages:
+        # Convert agent names to strings for JSON serialization
+        history_data["agent_chat_messages"] = {
+            str(k): v for k, v in agent_chat_messages.items()
+        }
+
+    save_json(history_data, filepath)
+
+
+def save_session_metadata(workspace_dir: Path, session_data: Dict[str, Any]) -> None:
+    """Save session metadata to workspace"""
+    session_file = workspace_dir / "session.json"
+    save_json(session_data, session_file)
+
+
+def load_session_metadata(workspace_dir: Path) -> Optional[Dict[str, Any]]:
+    """Load session metadata from workspace"""
+    session_file = workspace_dir / "session.json"
+    return load_json(session_file)
 

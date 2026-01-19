@@ -38,3 +38,6 @@ class ResearchState(TypedDict):
     # Workflow metadata
     stage: str
     error: Optional[str]
+
+    # Session management
+    session_id: str
