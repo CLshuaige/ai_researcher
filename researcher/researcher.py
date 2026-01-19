@@ -29,8 +29,6 @@ class AIResearcher:
         workspace_dir: Optional custom workspace directory
         clear_workspace: Whether to clear existing workspace on initialization
         model_preset: Optional model preset name from registry
-            (e.g., "openai-gpt4o", "qwen-30b-local"). If None, uses the
-            default preset from configuration.
     """
 
     def __init__(
@@ -38,11 +36,9 @@ class AIResearcher:
         project_name: str = "research_project",
         workspace_dir: Optional[Path] = None,
         clear_workspace: bool = False,
-        model_preset: Optional[str] = None,
-        enable_human_in_loop: bool = False
+        model_preset: Optional[str] = None
     ):
         self.project_name = project_name
-        self.enable_human_in_loop = enable_human_in_loop
 
         # Update model configuration if preset provided
         if model_preset is not None:
@@ -66,8 +62,8 @@ class AIResearcher:
 
         initialize_workspace(self.workspace_dir)
 
-        # Build graph with checkpointer and optional interrupt
-        self.graph = build_researcher_graph(enable_human_in_loop=enable_human_in_loop)
+        # Build graph with checkpointer
+        self.graph = build_researcher_graph()
         self.current_state: Optional[ResearchState] = None
         self.session_id: Optional[str] = None
 
@@ -110,7 +106,6 @@ class AIResearcher:
             "stage": "initialization",
             "error": None,
             "session_id": self.session_id,
-            "human_feedback": None,
         }
 
         # Save session metadata
@@ -219,61 +214,12 @@ class AIResearcher:
             else:
                 print(f"  ✗ {artifact}: not generated")
 
-    # Human-in-the-loop methods
-    def get_current_state(self):
-        """Get current workflow state (for human-in-the-loop)"""
-        if not self.session_id:
-            return None
-        config = {"configurable": {"thread_id": self.session_id}}
-        return self.graph.get_state(config)
-
-    def update_human_feedback(self, feedback: dict):
-        """Update human feedback and continue workflow
-
-        Args:
-            feedback: Dict containing human responses (e.g., {"answers": [...]})
-        """
-        if not self.session_id:
-            raise ValueError("No active session. Call run() first.")
-
-        config = {"configurable": {"thread_id": self.session_id}}
-
-        # Update state with human feedback
-        self.graph.update_state(config, {"human_feedback": feedback})
-
-        print(f"Human feedback updated: {feedback}")
-
-    def continue_workflow(self) -> ResearchState:
-        """Continue workflow after human feedback"""
-        if not self.session_id:
-            raise ValueError("No active session. Call run() first.")
-
-        config = {"configurable": {"thread_id": self.session_id}}
-
-        print("Continuing workflow...")
-        final_state = self.graph.invoke(None, config=config)
-
-        # Store state
-        self.current_state = final_state
-
-        # Update session metadata
-        session_data = load_session_metadata(self.workspace_dir) or {}
-        session_data["status"] = "completed" if not final_state.get("error") else "failed"
-        session_data["stage"] = final_state["stage"]
-        session_data["updated_at"] = datetime.now().isoformat()
-        save_session_metadata(self.workspace_dir, session_data)
-
-        print(f"Workflow continued. Current stage: {final_state['stage']}")
-
-        return final_state
-
     @staticmethod
-    def resume(workspace_dir: Path, enable_human_in_loop: bool = False) -> 'AIResearcher':
+    def resume(workspace_dir: Path) -> 'AIResearcher':
         """Resume a previous research session
 
         Args:
             workspace_dir: Path to existing workspace
-            enable_human_in_loop: Whether to enable human-in-the-loop
 
         Returns:
             AIResearcher instance with restored session
@@ -290,8 +236,7 @@ class AIResearcher:
 
         researcher = AIResearcher(
             project_name=project_name,
-            workspace_dir=workspace_dir,
-            enable_human_in_loop=enable_human_in_loop
+            workspace_dir=workspace_dir
         )
 
         researcher.session_id = session_data.get("session_id", workspace_dir.name)

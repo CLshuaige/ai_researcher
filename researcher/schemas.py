@@ -7,7 +7,8 @@ class IdeaCandidate(BaseModel):
     """Single research idea candidate"""
     content: str = Field(description="Idea description")
     score: float = Field(default=0.0, ge=0.0, le=1.0, description="Idea quality score")
-    criticisms: List[str] = Field(default_factory=list, description="Criticism history")
+    strengths: List[str] = Field(default_factory=list, description="Idea strengths")
+    weaknesses: List[str] = Field(default_factory=list, description="Idea weaknesses")
     round: int = Field(default=0, description="Round when proposed")
     timestamp: datetime = Field(default_factory=datetime.now)
 
@@ -33,7 +34,7 @@ class ResearchIdea(BaseModel):
     def add_criticism(self, candidate_index: int, criticism: str) -> None:
         """Add criticism to specific candidate"""
         if 0 <= candidate_index < len(self.candidates):
-            self.candidates[candidate_index].criticisms.append(criticism)
+            self.candidates[candidate_index].weaknesses.append(criticism)
 
     def rank_candidates(self) -> None:
         """Sort candidates by score and select best"""
@@ -53,10 +54,16 @@ class ResearchIdea(BaseModel):
             lines.append(f"Round: {candidate.round}\n\n")
             lines.append(f"{candidate.content}\n\n")
 
-            if candidate.criticisms:
-                lines.append("### Criticisms\n")
-                for j, crit in enumerate(candidate.criticisms, 1):
-                    lines.append(f"{j}. {crit}\n")
+            if candidate.strengths:
+                lines.append("### Strengths\n")
+                for j, strength in enumerate(candidate.strengths, 1):
+                    lines.append(f"{j}. {strength}\n")
+                lines.append("\n")
+
+            if candidate.weaknesses:
+                lines.append("### Weaknesses\n")
+                for j, weakness in enumerate(candidate.weaknesses, 1):
+                    lines.append(f"{j}. {weakness}\n")
                 lines.append("\n")
 
         return "".join(lines)

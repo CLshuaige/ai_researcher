@@ -1,6 +1,8 @@
 from typing import Dict, Any
 
-from autogen import GroupChat, GroupChatManager, UserProxyAgent
+from autogen.agentchat import initiate_group_chat
+from autogen.agentchat.group.patterns import DefaultPattern
+from autogen.agentchat.group import RevertToUserTarget
 
 from researcher.state import ResearchState
 from researcher.agents import WriterAgent
@@ -30,6 +32,16 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
 
         llm_config = get_llm_config()
 
+        writer = WriterAgent().create_agent(llm_config)
+
+        pattern = DefaultPattern(
+            initial_agent=writer,
+            agents=[writer],
+            group_manager_args={"llm_config": llm_config}
+        )
+
+        writer.handoffs.set_after_work(RevertToUserTarget())
+
         prompt = PAPER_WRITING_PROMPT.format(
             task=task,
             literature=literature_synthesis,
@@ -38,45 +50,35 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             results=results_summary
         )
 
-        writer = WriterAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(
-            name="user_proxy",
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=0,
-            code_execution_config=False
+        result, context, last_agent = initiate_group_chat(
+            pattern=pattern,
+            messages=prompt,
+            max_rounds=1
         )
 
-        log_stage(workspace_dir, "report_generation", "Generating paper")
+        # Extract paper from writer
+        paper = None
+        for msg in reversed(result.messages):
+            if msg.get("name") == writer.name and msg.get("content"):
+                paper = msg["content"]
+                break
 
-        groupchat = GroupChat(
-            agents=[user_proxy, writer],
-            messages=[],
-            max_round=1,
-            speaker_selection_method="round_robin"
-        )
-        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
-        user_proxy.initiate_chat(manager, message=prompt)
+        if not paper:
+            raise WorkflowError("Writer did not generate paper")
 
-        paper = user_proxy.last_message()["content"]
-
-        # Save AG2 history
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="report_generation",
-            messages=groupchat.messages,
+            messages=result.messages,
             agent_chat_messages=writer.chat_messages
         )
 
         paper_path = get_artifact_path(workspace_dir, "paper")
-        save_markdown(paper, paper_path.with_suffix('.md'))
+        save_markdown(paper, paper_path)
 
         log_stage(workspace_dir, "report_generation", "Completed")
 
-        return {
-            "task": task,
-            "paper": paper,
-            "stage": "report_generation"
-        }
+        return {"task": task, "paper": paper, "stage": "report_generation"}
 
     except Exception as e:
         log_stage(workspace_dir, "report_generation", f"Error: {str(e)}")

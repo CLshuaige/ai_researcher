@@ -21,6 +21,7 @@ class ResearchState(TypedDict):
     # Input
     input_text: str
     task: Optional[str]
+    config: Optional[dict]
 
     # Research artifacts (structured objects passed between nodes)
     literature: Optional[LiteratureReview]

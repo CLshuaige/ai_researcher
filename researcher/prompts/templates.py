@@ -171,10 +171,19 @@ Output format (JSON):
   "overview": "method overview",
   "steps": ["step1", "step2", ...],
   "assignments": [
-    {{"role": "Engineer", "tasks": ["task1", "task2"]}},
-    {{"role": "RA", "tasks": ["task1", "task2"]}}
+    {{
+      "role": "Engineer",
+      "tasks": ["task1", "task2"],
+      "dependencies": ["dep1", "dep2"]
+    }},
+    {{
+      "role": "RA",
+      "tasks": ["task1", "task2"],
+      "dependencies": ["dep1", "dep2"]
+    }}
   ],
   "resources": {{"data": "...", "compute": "..."}},
+  "criticisms": ["criticism1", "criticism2"],
   "debate_rounds": 3
 }}
 """

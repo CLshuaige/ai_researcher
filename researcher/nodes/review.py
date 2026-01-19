@@ -1,6 +1,8 @@
 from typing import Dict, Any
 
-from autogen import GroupChat, GroupChatManager, UserProxyAgent
+from autogen.agentchat import initiate_group_chat
+from autogen.agentchat.group.patterns import DefaultPattern
+from autogen.agentchat.group import RevertToUserTarget
 
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
@@ -18,7 +20,7 @@ from researcher.exceptions import WorkflowError
 
 
 def review_node(state: ResearchState) -> Dict[str, Any]:
-    """Review research paper"""
+    """Review research report"""
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "review", "Starting review")
 
@@ -36,34 +38,38 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
 
         llm_config = get_llm_config()
 
+        reviewer = ReviewerAgent().create_agent(llm_config)
+
+        pattern = DefaultPattern(
+            initial_agent=reviewer,
+            agents=[reviewer],
+            group_manager_args={"llm_config": llm_config}
+        )
+
+        reviewer.handoffs.set_after_work(RevertToUserTarget())
+
         prompt = REVIEW_PROMPT.format(paper=paper)
 
-        reviewer = ReviewerAgent().create_assistant(llm_config)
-        user_proxy = UserProxyAgent(
-            name="user_proxy",
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=0,
-            code_execution_config=False
+        result, context, last_agent = initiate_group_chat(
+            pattern=pattern,
+            messages=prompt,
+            max_rounds=1
         )
 
-        log_stage(workspace_dir, "review", "Generating review")
+        # Extract review from reviewer
+        review_text = None
+        for msg in reversed(result.messages):
+            if msg.get("name") == reviewer.name and msg.get("content"):
+                review_text = msg["content"]
+                break
 
-        groupchat = GroupChat(
-            agents=[user_proxy, reviewer],
-            messages=[],
-            max_round=1,
-            speaker_selection_method="round_robin"
-        )
-        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
-        user_proxy.initiate_chat(manager, message=prompt)
+        if not review_text:
+            raise WorkflowError("Reviewer did not generate review")
 
-        review_text = user_proxy.last_message()["content"]
-
-        # Save AG2 history
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="review",
-            messages=groupchat.messages,
+            messages=result.messages,
             agent_chat_messages=reviewer.chat_messages
         )
 

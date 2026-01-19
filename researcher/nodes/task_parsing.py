@@ -1,6 +1,20 @@
 from typing import Dict, Any
 
-from autogen import GroupChat, GroupChatManager, UserProxyAgent
+from autogen import ConversableAgent
+from autogen.agentchat import initiate_group_chat
+from autogen.agentchat.group.patterns import DefaultPattern
+from autogen.agentchat.group import (
+    OnCondition,
+    StringLLMCondition,
+    OnContextCondition,
+    ExpressionContextCondition,
+    ContextExpression,
+    ContextVariables,
+    FunctionTarget,
+    FunctionTargetResult,
+    AgentTarget,
+    RevertToUserTarget,
+)
 
 from researcher.state import ResearchState
 from researcher.agents import AskerAgent, TaskFormatterAgent
@@ -12,7 +26,6 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     save_agent_history,
-    load_global_config,
 )
 from researcher.exceptions import WorkflowError
 
@@ -27,76 +40,104 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         if not input_text:
             raise WorkflowError("Input file not found")
 
-        global_config = load_global_config()
-        task_parsing_config = global_config.get("researcher", {}).get("task_parsing", {})
-        enable_hitl = task_parsing_config.get("human_in_the_loop", False)
-        max_iterations = task_parsing_config.get("max_iterations", 3)
+        config = state["config"]["researcher"]["task_parsing"]
+        enable_hitl = config["human_in_the_loop"]
+        max_iterations = config["max_iterations"]
 
         llm_config = get_llm_config()
 
-        asker = AskerAgent().create_assistant(llm_config)
-        formatter = TaskFormatterAgent().create_assistant(llm_config)
-
-        # Determine whether to use human in the loop
+        asker = AskerAgent().create_agent(llm_config)
+        formatter = TaskFormatterAgent().create_agent(llm_config)
+        
         if enable_hitl:
-            user_proxy = UserProxyAgent(
-                name="human",
-                human_input_mode="ALWAYS",
-                max_consecutive_auto_reply=0,
-                code_execution_config=False
+            user = ConversableAgent(
+                name="user",
+                human_input_mode="ALWAYS"
             )
-            log_stage(workspace_dir, "task_parsing", "Human-in-the-loop enabled")
+            
+            def increment_clarification_count(context_variables: ContextVariables) -> FunctionTargetResult:
+                current_count = context_variables.get("clarification_count", 0)
+                context_variables["clarification_count"] = current_count + 1
+                return FunctionTargetResult(
+                    target=AgentTarget(asker),
+                    context_variables=context_variables
+                )
+            
+            agents_list = [asker, formatter, user]
+            user_agent = user
+            initial_context = ContextVariables(
+                clarification_count=0,
+                max_iterations=max_iterations
+            )
         else:
-            user_proxy = UserProxyAgent(
-                name="auto_proxy",
-                human_input_mode="NEVER",
-                max_consecutive_auto_reply=0,
-                code_execution_config=False
-            )
-            log_stage(workspace_dir, "task_parsing", "Auto mode (no human input)")
+            agents_list = [asker, formatter]
+            user_agent = None
+            initial_context = None
 
-        # Phase 1: Asker analyzes input and asks clarifying questions
-        groupchat = GroupChat(
-            agents=[user_proxy, asker],
-            messages=[],
-            max_round=max_iterations,
-            speaker_selection_method="round_robin"
+        pattern = DefaultPattern(
+            initial_agent=asker,
+            agents=agents_list,
+            user_agent=user_agent,
+            context_variables=initial_context,
+            group_manager_args={"llm_config": llm_config}
         )
 
-        manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
+        if enable_hitl:
+            asker.handoffs.add_llm_conditions([
+                OnCondition(
+                    target=AgentTarget(user),
+                    condition=StringLLMCondition(
+                        prompt="""Transfer to User when you need to ask clarifying questions:
+- The research task is ambiguous or incomplete
+- Critical information is missing (objectives, scope, constraints, resources)
+- You need user input to better understand the requirements
+- Further clarification is needed before proceeding"""
+                    ),
+                ),
+                OnCondition(
+                    target=AgentTarget(formatter),
+                    condition=StringLLMCondition(
+                        prompt="""Transfer to Formatter when the task is clear and no more clarification is needed:
+- The research task is clearly defined with specific objectives
+- All necessary information (scope, constraints, resources) is available
+- You have gathered sufficient information from the user (or no clarification was needed)
+- The task is ready to be formatted and finalized"""
+                    ),
+                ),
+            ])
+            asker.handoffs.add_context_conditions([
+                OnContextCondition(
+                    target=AgentTarget(formatter),
+                    condition=ExpressionContextCondition(
+                        expression=ContextExpression("${clarification_count} >= ${max_iterations}")
+                    )
+                ),
+            ])
+            user.handoffs.set_after_work(FunctionTarget(increment_clarification_count))
+        else:
+            asker.handoffs.set_after_work(AgentTarget(formatter))
+
+        formatter.handoffs.set_after_work(RevertToUserTarget())
+
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
-        user_proxy.initiate_chat(manager, message=prompt)
-
-        conversation_history = _extract_conversation(groupchat.messages)
-
-        # Phase 2: Formatter generates final task description
-        # Use a separate user_proxy with NEVER mode for formatting (no human input needed)
-        formatter_proxy = UserProxyAgent(
-            name="formatter_proxy",
-            human_input_mode="NEVER",
-            max_consecutive_auto_reply=0,
-            code_execution_config=False
+        
+        max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
+        
+        result, context, last_agent = initiate_group_chat(
+            pattern=pattern,
+            messages=prompt,
+            max_rounds=max_rounds
         )
 
-        formatter_prompt = f"""Based on the following conversation, format a clear and comprehensive research task description:
+        # Extract task from formatter's last message
+        task = None
+        for msg in reversed(result.messages):
+            if msg.get("name") == formatter.name and msg.get("content"):
+                task = msg["content"]
+                break
 
-Original Input:
-{input_text}
-
-Conversation History:
-{conversation_history}
-
-Provide a well-structured task description that incorporates all clarifications."""
-
-        groupchat_format = GroupChat(
-            agents=[formatter_proxy, formatter],
-            messages=[],
-            max_round=1,
-            speaker_selection_method="round_robin"
-        )
-        manager_format = GroupChatManager(groupchat=groupchat_format, llm_config=llm_config)
-        formatter_proxy.initiate_chat(manager_format, message=formatter_prompt)
-        task = formatter_proxy.last_message()["content"]
+        if not task:
+            raise WorkflowError("Formatter did not generate task description")
 
         task_path = get_artifact_path(workspace_dir, "task")
         save_markdown(task, task_path)
@@ -104,31 +145,16 @@ Provide a well-structured task description that incorporates all clarifications.
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="task_parsing",
-            messages=groupchat.messages + groupchat_format.messages,
+            messages=result.messages,
             agent_chat_messages={
                 asker.name: asker.chat_messages,
                 formatter.name: formatter.chat_messages
             }
         )
 
-        log_stage(workspace_dir, "task_parsing", "Task parsing completed")
-
-        return {
-            "task": task,
-            "stage": "task_parsing"
-        }
+        log_stage(workspace_dir, "task_parsing", "Completed")
+        return {"task": task, "stage": "task_parsing"}
 
     except Exception as e:
         log_stage(workspace_dir, "task_parsing", f"Error: {str(e)}")
         raise WorkflowError(f"Task parsing failed: {str(e)}")
-
-
-def _extract_conversation(messages: list) -> str:
-    """Extract conversation history as formatted text"""
-    conversation = []
-    for msg in messages:
-        if isinstance(msg, dict) and "content" in msg and "name" in msg:
-            role = msg["name"]
-            content = msg["content"]
-            conversation.append(f"[{role}]: {content}")
-    return "\n\n".join(conversation)
