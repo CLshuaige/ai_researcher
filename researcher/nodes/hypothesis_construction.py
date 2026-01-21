@@ -9,7 +9,8 @@ from autogen.agentchat.group import (
     AgentTarget,
     FunctionTarget,
     FunctionTargetResult,
-    RevertToUserTarget,
+    TerminateTarget,
+    ContextVariables,
 )
 
 from researcher.state import ResearchState
@@ -49,51 +50,69 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         critic = IdeaCriticAgent().create_agent(llm_config)
         formatter = IdeaFormatterAgent().create_agent(llm_config)
 
+        initial_context = ContextVariables(data={
+                "debate_count": 0,
+                "max_iterations": max_iterations
+            }
+        )
+
         pattern = DefaultPattern(
             initial_agent=proposer,
             agents=[proposer, critic, formatter],
+            context_variables=initial_context,
             group_manager_args={"llm_config": llm_config}
         )
 
         proposer.handoffs.set_after_work(AgentTarget(critic))
 
-        def format_debate_for_formatter(context_variables):
+        def format_debate_for_formatter(output, context_variables):
             history_parts = []
             for agent, name in [(proposer, "Proposer"), (critic, "Critic")]:
-                for msg in getattr(agent, 'chat_messages', []):
-                    if msg.get("role") == "assistant" and msg.get("content"):
-                        history_parts.append(f"[{name}]: {msg['content']}")
+                chat_messages = getattr(agent, 'chat_messages', {})
+                for message_list in chat_messages.values():
+                    for msg in message_list:
+                        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+                            history_parts.append(f"[{name}]: {msg['content']}")
             
             debate_history = "\n\n".join(history_parts) if history_parts else "No debate history available."
             message = IDEA_FORMATTER_PROMPT.format(debate_history=debate_history)
             return FunctionTargetResult(
                 target=AgentTarget(formatter),
-                message=message,
+                messages=message,
                 context_variables=context_variables
             )
 
-        critic.handoffs.add_llm_conditions([
-            OnCondition(
-                target=FunctionTarget(format_debate_for_formatter),
-                condition=StringLLMCondition(
-                    prompt="""Transfer to Formatter when:
-- The proposed research idea is novel, feasible, and scientifically sound
-- All major concerns have been addressed
-- The idea is ready for final formatting"""
-                ),
-            ),
-            OnCondition(
-                target=AgentTarget(proposer),
-                condition=StringLLMCondition(
-                    prompt="""Transfer back to Proposer when:
-- The idea needs significant revision or improvement
-- There are unresolved concerns about novelty, feasibility, or scientific merit
-- Further refinement is required"""
-                ),
-            ),
-        ])
+        def critic_after_work(output: Any, ctx: ContextVariables) -> FunctionTargetResult:
+            content = str(output)
+            
+            current_count = ctx.get("debate_count", 0)
+            max_iter = ctx.get("max_iterations", max_iterations)
+            
+            current_count += 1
+            ctx["debate_count"] = current_count
 
-        formatter.handoffs.set_after_work(RevertToUserTarget())
+            # Check for READY identifier
+            if "READY:" in content and "NEEDS_REVISION:" not in content:
+                return FunctionTargetResult(
+                    target=FunctionTarget(format_debate_for_formatter),
+                    context_variables=ctx
+                )
+            
+            # Check for iteration limit
+            if current_count >= max_iter:
+                return FunctionTargetResult(
+                    target=FunctionTarget(format_debate_for_formatter),
+                    context_variables=ctx
+                )
+
+            # Default: continue debate with proposer
+            return FunctionTargetResult(
+                target=AgentTarget(proposer),
+                context_variables=ctx
+            )
+
+        critic.handoffs.set_after_work(FunctionTarget(critic_after_work))
+        formatter.handoffs.set_after_work(TerminateTarget())
 
         initial_message = IDEA_PROPOSAL_PROMPT.format(task=task, literature=literature_text)
         log_stage(workspace_dir, "hypothesis_construction", f"Running debate (max {max_iterations} rounds)")
@@ -107,7 +126,7 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="hypothesis_construction",
-            messages=result.messages,
+            messages=result.chat_history,
             agent_chat_messages={
                 proposer.name: proposer.chat_messages,
                 critic.name: critic.chat_messages,
@@ -117,7 +136,7 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
 
         # Extract formatted output from formatter
         formatted_output = None
-        for msg in reversed(result.messages):
+        for msg in reversed(result.chat_history):
             if msg.get("name") == formatter.name and msg.get("content"):
                 try:
                     formatted_output = parse_json_from_response(msg["content"])
@@ -128,7 +147,7 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         if not formatted_output:
             raise WorkflowError("Formatter did not generate valid output")
 
-        debate_rounds = len([msg for msg in result.messages if msg.get("name") in [proposer.name, critic.name]]) // 2
+        debate_rounds = len([msg for msg in result.chat_history if msg.get("name") in [proposer.name, critic.name]]) // 2
         idea = _parse_idea(formatted_output, debate_rounds)
 
         idea_path = get_artifact_path(workspace_dir, "idea")

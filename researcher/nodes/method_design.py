@@ -9,11 +9,12 @@ from autogen.agentchat.group import (
     AgentTarget,
     FunctionTarget,
     FunctionTargetResult,
-    RevertToUserTarget,
+    TerminateTarget,
+    ContextVariables,
 )
 
 from researcher.state import ResearchState
-from researcher.schemas import ExperimentalMethod, TaskAssignment
+from researcher.schemas import ExperimentalMethod, TaskAssignment, MethodStep
 from researcher.agents import MethodPlannerAgent, MethodCriticAgent, MethodFormatterAgent
 from researcher.utils import (
     save_markdown,
@@ -29,7 +30,7 @@ from researcher.exceptions import WorkflowError
 
 
 def method_design_node(state: ResearchState) -> Dict[str, Any]:
-    """Design experimental method using DefaultPattern with Planner-Critic debate"""
+    """Design experimental method through multi-agent debate"""
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "method_design", "Starting method design")
 
@@ -49,53 +50,69 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         critic = MethodCriticAgent().create_agent(llm_config)
         formatter = MethodFormatterAgent().create_agent(llm_config)
 
+        initial_context = ContextVariables(data={
+                "debate_count": 0,
+                "max_iterations": max_iterations
+            }
+        )
+
         pattern = DefaultPattern(
             initial_agent=planner,
             agents=[planner, critic, formatter],
+            context_variables=initial_context,
             group_manager_args={"llm_config": llm_config}
         )
 
         planner.handoffs.set_after_work(AgentTarget(critic))
 
-        def format_debate_for_formatter(context_variables):
+        def format_debate_for_formatter(output, context_variables):
             history_parts = []
             for agent, name in [(planner, "Planner"), (critic, "Critic")]:
-                for msg in getattr(agent, 'chat_messages', []):
-                    if msg.get("role") == "assistant" and msg.get("content"):
-                        history_parts.append(f"[{name}]: {msg['content']}")
+                chat_messages = getattr(agent, 'chat_messages', {})
+                for message_list in chat_messages.values():
+                    for msg in message_list:
+                        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+                            history_parts.append(f"[{name}]: {msg['content']}")
             
             debate_history = "\n\n".join(history_parts) if history_parts else "No debate history available."
             message = METHOD_FORMATTER_PROMPT.format(debate_history=debate_history)
             return FunctionTargetResult(
                 target=AgentTarget(formatter),
-                message=message,
+                messages=message,
                 context_variables=context_variables
             )
 
-        critic.handoffs.add_llm_conditions([
-            OnCondition(
-                target=FunctionTarget(format_debate_for_formatter),
-                condition=StringLLMCondition(
-                    prompt="""Transfer to Formatter when:
-- The experimental method is complete, feasible, and scientifically rigorous
-- All steps are clearly defined with proper task assignments
-- Resource requirements are realistic and well-documented
-- All major concerns have been addressed"""
-                ),
-            ),
-            OnCondition(
-                target=AgentTarget(planner),
-                condition=StringLLMCondition(
-                    prompt="""Transfer back to Planner when:
-- The method needs significant revision or improvement
-- Steps are unclear, incomplete, or impractical
-- Resource constraints are not properly addressed
-- Further refinement is required"""
-                ),
-            ),
-        ])
+        def critic_after_work(output: Any, ctx: ContextVariables) -> FunctionTargetResult:
+            content = str(output)
+            
+            current_count = ctx.get("debate_count", 0)
+            max_iter = ctx.get("max_iterations", max_iterations)
+            
+            current_count += 1
+            ctx["debate_count"] = current_count
 
-        formatter.handoffs.set_after_work(RevertToUserTarget())
+            # Check for READY identifier
+            if "READY:" in content and "NEEDS_REVISION:" not in content:
+                return FunctionTargetResult(
+                    target=FunctionTarget(format_debate_for_formatter),
+                    context_variables=ctx
+                )
+            
+            # Check for iteration limit
+            if current_count >= max_iter:
+                return FunctionTargetResult(
+                    target=FunctionTarget(format_debate_for_formatter),
+                    context_variables=ctx
+                )
+
+            # Default: continue debate with planner
+            return FunctionTargetResult(
+                target=AgentTarget(planner),
+                context_variables=ctx
+            )
+
+        critic.handoffs.set_after_work(FunctionTarget(critic_after_work))
+        formatter.handoffs.set_after_work(TerminateTarget())
 
         initial_message = METHOD_PROPOSAL_PROMPT.format(idea=idea_content, task=task)
         log_stage(workspace_dir, "method_design", f"Running debate (max {max_iterations} rounds)")
@@ -109,7 +126,7 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="method_design",
-            messages=result.messages,
+            messages=result.chat_history,
             agent_chat_messages={
                 planner.name: planner.chat_messages,
                 critic.name: critic.chat_messages,
@@ -119,7 +136,7 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
 
         # Extract formatted output from formatter
         formatted_output = None
-        for msg in reversed(result.messages):
+        for msg in reversed(result.chat_history):
             if msg.get("name") == formatter.name and msg.get("content"):
                 try:
                     formatted_output = parse_json_from_response(msg["content"])
@@ -131,7 +148,7 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
             raise WorkflowError("Formatter did not generate valid output")
 
         # Calculate debate rounds from message count (each round = 2 messages: planner + critic)
-        debate_rounds = len([msg for msg in result.messages if msg.get("name") in [planner.name, critic.name]]) // 2
+        debate_rounds = len([msg for msg in result.chat_history if msg.get("name") in [planner.name, critic.name]]) // 2
         method = _parse_method(formatted_output, debate_rounds)
 
         method_path = get_artifact_path(workspace_dir, "method")
@@ -147,6 +164,17 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
 
 
 def _parse_method(formatted_output: Dict[str, Any], debate_rounds: int) -> ExperimentalMethod:
+    steps = []
+    for step_data in formatted_output.get("steps", []):
+        step = MethodStep(
+            step_id=step_data.get("step_id", 0),
+            description=step_data.get("description", ""),
+            assignee=step_data.get("assignee", ""),
+            dependencies=step_data.get("dependencies", []),
+            expected_output=step_data.get("expected_output", "")
+        )
+        steps.append(step)
+
     assignments = []
     for assignment_data in formatted_output.get("assignments", []):
         assignment = TaskAssignment(
@@ -158,7 +186,8 @@ def _parse_method(formatted_output: Dict[str, Any], debate_rounds: int) -> Exper
 
     return ExperimentalMethod(
         overview=formatted_output.get("overview", ""),
-        steps=formatted_output.get("steps", []),
+        steps=steps,
+        execution_order=formatted_output.get("execution_order", []),
         assignments=assignments,
         resources=formatted_output.get("resources", {}),
         debate_rounds=debate_rounds,

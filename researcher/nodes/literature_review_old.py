@@ -1,18 +1,13 @@
-from typing import Dict, Any, List, Annotated, Optional
+from typing import Dict, Any, List, Annotated
 from pathlib import Path
 
-from autogen import ConversableAgent, ContextExpression
-from autogen.agentchat import initiate_group_chat, register_function
+from autogen.agentchat import initiate_group_chat
 from autogen.agentchat.group.patterns import DefaultPattern
 from autogen.agentchat.group import (
     AgentTarget,
     FunctionTarget,
     FunctionTargetResult,
-    TerminateTarget,
-    ContextVariables,
-    ReplyResult,
-    OnContextCondition,
-    ExpressionContextCondition
+    RevertToUserTarget,
 )
 
 from researcher.state import ResearchState
@@ -46,10 +41,10 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         llm_config = get_llm_config()
 
+        # Define arxiv search tool
         def search_arxiv_papers(
-            context_variables: ContextVariables,
             query: Annotated[str, "Search query for arxiv academic database"],
-            max_results: Annotated[int, "Maximum number of papers to retrieve"] = 5,
+            max_results: Annotated[int, "Maximum number of papers to retrieve"] = 5
         ) -> dict:
             """Search arxiv for academic papers, download and cache PDFs, return paper metadata"""
             try:
@@ -117,162 +112,41 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                 # Format papers text
                 papers_text = "\n\n---\n\n".join(papers_text_parts) if papers_text_parts else "No papers found"
 
-                context_variables["state"] = "searched"
-                context_variables["searching_results"].append({
+                return {
                     "success": True,
                     "papers": papers,
                     "query": query,
                     "formatted_text": papers_text
-                })
-
-
-                # return {
-                #     "success": True,
-                #     "papers": papers,
-                #     "query": query,
-                #     "formatted_text": papers_text
-                # }
-                return ReplyResult(
-                    message="Searching complete.",
-                    #target=FunctionTarget(format_papers_for_summarizer),
-                    context_variables=context_variables
-                )
+                }
 
             except ImportError:
                 return {"success": False, "error": "arxiv package not installed"}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
-
-
-        # 1. 定义 hook 函数
-        def inject_context_to_prompt(messages: list[dict]) -> list[dict]:
-            """
-            把 context variables 里的 task 和 papers 信息，注入到 Summarizer 的 prompt 里。
-            """
-            # messages - 当前 agent 的对话历史（含 user + system 等）
-            # 先查最后一条 user 说的话
-            last_user = None
-            if messages:
-                for msg in reversed(messages):
-                    if msg.get("role") == "user":
-                        last_user = msg
-                        break
-
-            # 读取 context variables
-            # 当前 registered hook 是挂在 Summarizer agent 上，
-            # 所以我们可以通过 messages 找 owner agent 的 context
-            # 假设 Summarizer agent 有 context_variables 属性
-            # 你也可以通过闭包传进来
-            ctx: ContextVariables = summarizer.context_variables
-
-            task_text = ctx.get("task", "")
-            searching_results = ctx.get("searching_results", [])
-
-            # 拼接所有检索到的论文摘要
-            papers_text_list = []
-            for r in searching_results:
-                formatted = r.get("formatted_text", "")
-                if formatted:
-                    papers_text_list.append(formatted)
-
-            combined_papers = "\n\n---\n\n".join(papers_text_list) if papers_text_list else ""
-
-            # 构造额外提示
-            extra_prompt = (
-                f"Task:\n{task_text}\n\n"
-                f"Papers:\n{combined_papers}\n\n"
-                "Use the above task and paper info to generate a summarized synthesis."
-            )
-
-            # 我们把这个 prompt 放在 messages 最后 user 之前
-            # 这样 LLM 在看到 Summarizer 输入时会包含我们动态构造的内容
-            new_msgs = []
-            for msg in messages:
-                new_msgs.append(msg)
-
-            # 插入作为额外 user prompt
-            new_msgs.append({
-                "role": "user",
-                "content": extra_prompt
-            })
-
-            return new_msgs
-
-
-
-        
-
-        searcher = LiteratureSearcherAgent().create_agent(llm_config)
+        searcher = LiteratureSearcherAgent().create_agent(llm_config, functions=[search_arxiv_papers])
         summarizer = LiteratureSummarizerAgent().create_agent(llm_config)
-
-        # def always_trigger(sender):
-        #     return True
-        #summarizer.register_reply(always_trigger, context_for_summarization_reply_func, position=0)
-        llm_config_tool = {
-                "config_list": [
-                    {
-                        "model": "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-30B-A3B-Instruct-2507",
-                        "base_url": "http://localhost:8001/v1",
-                        "api_key": "EMPTY",
-                        "tool_choice": "required"
-                    }
-                ],
-                "temperature": 0.7
-            }
-        executor = ConversableAgent(
-            name="SearchExecutor",
-            human_input_mode="NEVER",
-            system_message="Initiate the tool call based on the received search keywords and other information",
-            llm_config=llm_config_tool,
-            functions=[search_arxiv_papers]
-        )
-
-        # register_function(
-        #     search_arxiv_papers,
-        #     caller=executor,
-        #     executor=executor,
-        #     description="Search arxiv for academic papers, download and cache PDFs, return paper metadata",
-        # )
-
-        initial_variables = ContextVariables(data={
-            "state": "start",
-            "task": task,
-            "searching_results": []
-        })
 
         pattern = DefaultPattern(
             initial_agent=searcher,
-            agents=[searcher, executor, summarizer],
-            group_manager_args={"llm_config": llm_config},
-            context_variables=initial_variables
+            agents=[searcher, summarizer],
+            group_manager_args={"llm_config": llm_config}
         )
 
-        def format_papers_for_summarizer(output: any, ctx: ContextVariables):
+        def format_papers_for_summarizer(context_variables):
             message = f"""{LITERATURE_SUMMARY_PROMPT.format(
-                papers="Extract and synthesize the papers from the search results above (look for formatted_text in the tool results).",
+                papers="Please extract and synthesize the papers from the search results above (look for formatted_text in the tool results).",
                 task=task
             )}"""
             
             return FunctionTargetResult(
                 target=AgentTarget(summarizer),
-                messages=message,
-                context_variables=ctx
+                message=message,
+                context_variables=context_variables
             )
 
-        searcher.handoffs.set_after_work(AgentTarget(executor))
-        executor.handoffs.add_context_condition(
-            OnContextCondition(
-                #target=FunctionTarget(format_papers_for_summarizer),
-                target=AgentTarget(summarizer),
-                condition=ExpressionContextCondition(ContextExpression("${state} == 'searched'"))
-            )
-        )
-        summarizer.register_hook(
-            "process_all_messages_before_reply",
-            inject_context_to_prompt
-        )
-        summarizer.handoffs.set_after_work(TerminateTarget())
+        searcher.handoffs.set_after_work(FunctionTarget(format_papers_for_summarizer))
+        summarizer.handoffs.set_after_work(RevertToUserTarget())
 
         prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
 
@@ -286,7 +160,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         literature_items = []
         synthesis = None
 
-        for msg in result.chat_history:
+        for msg in result.messages:
             content = msg.get("content", "")
 
             if "arxiv_id" in content and isinstance(content, str):
@@ -314,7 +188,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="literature_review",
-            messages=result.chat_history,
+            messages=result.messages,
             agent_chat_messages={
                 searcher.name: searcher.chat_messages,
                 summarizer.name: summarizer.chat_messages

@@ -75,14 +75,22 @@ LITERATURE_SUMMARIZER_SYSTEM_PROMPT = """You are a literature summarization expe
 # Hypothesis Construction Module
 IDEA_PROPOSER_SYSTEM_PROMPT = """You are a creative research idea proposer. Your role is to generate innovative, novel research hypotheses based on literature review and task requirements. Focus on originality, feasibility, and scientific significance. Propose specific, testable ideas that can advance the field."""
 
-IDEA_CRITIC_SYSTEM_PROMPT = """You are a research idea critic. Your role is to rigorously evaluate proposed research ideas for novelty, feasibility, and scientific merit. Identify potential weaknesses, methodological concerns, and areas for improvement. Provide constructive criticism with specific suggestions to strengthen the ideas."""
+IDEA_CRITIC_SYSTEM_PROMPT = """You are a research idea critic. Your role is to rigorously evaluate proposed research ideas for novelty, feasibility, and scientific merit. Identify potential weaknesses, methodological concerns, and areas for improvement. Provide constructive criticism with specific suggestions to strengthen the ideas.
+
+After your evaluation, you MUST end your response with one of the following identifiers:
+- READY: [your evaluation] - Use when the idea is novel, feasible, and scientifically sound, and all major concerns have been addressed. The idea is ready for final formatting.
+- NEEDS_REVISION: [your evaluation] - Use when the idea needs significant revision or improvement, there are unresolved concerns about novelty/feasibility/scientific merit, or further refinement is required."""
 
 IDEA_FORMATTER_SYSTEM_PROMPT = """You are a research idea evaluator and formatter. Your role is to review debate history between proposer and critic, extract all proposed ideas, evaluate them based on novelty, feasibility, and scientific merit, assign quality scores, and rank them. Be objective and thorough."""
 
 # Method Design Module
 METHOD_PLANNER_SYSTEM_PROMPT = """You are an experimental method planner. Your role is to design detailed, executable experimental workflows based on research ideas. Focus on step-by-step procedures, task assignments (RA vs Engineer), resource requirements, and evaluation metrics. Ensure the method is practical and scientifically rigorous."""
 
-METHOD_CRITIC_SYSTEM_PROMPT = """You are an experimental method critic. Your role is to evaluate proposed experimental methods for completeness, feasibility, and validity. Assess whether the method properly tests the hypothesis, identify missing steps or resources, and suggest improvements. Focus on practical implementation concerns."""
+METHOD_CRITIC_SYSTEM_PROMPT = """You are an experimental method critic. Your role is to evaluate proposed experimental methods for completeness, feasibility, and validity. Assess whether the method properly tests the hypothesis, identify missing steps or resources, and suggest improvements. Focus on practical implementation concerns.
+
+After your evaluation, you MUST end your response with one of the following identifiers:
+- READY: [your evaluation] - Use when the experimental method is complete, feasible, and scientifically rigorous, all steps are clearly defined with proper task assignments, resource requirements are realistic and well-documented, and all major concerns have been addressed.
+- NEEDS_REVISION: [your evaluation] - Use when the method needs significant revision or improvement, steps are unclear/incomplete/impractical, resource constraints are not properly addressed, or further refinement is required."""
 
 METHOD_FORMATTER_SYSTEM_PROMPT = """You are an experimental method evaluator and formatter. Your role is to review debate history between planner and critic, extract the final experimental method, structure it with clear steps and assignments, and document how criticisms were addressed. Be comprehensive and organized."""
 
@@ -218,33 +226,56 @@ Debate History:
 
 Task:
 1. Extract the final experimental method from the debate
-2. Structure it with:
-   - Overview
-   - Detailed steps
-   - Task assignments (RA and Engineer)
-   - Required resources
-3. Include criticisms and how they were addressed
+2. Structure it with detailed execution steps
+3. For each step, specify:
+   - Step ID (starting from 1)
+   - Description (what needs to be done)
+   - Assignee (RA for wet-lab/manual experiments, Engineer for computational/coding tasks)
+   - Dependencies (list of step IDs that must complete first; use empty list [] if no dependencies)
+   - Expected output (what this step should produce)
+4. Provide execution order (sequence of step IDs respecting dependencies), usually in sequence
+5. Assignments for total summary and required resources
 
 Output format (JSON):
 {{
-  "overview": "method overview",
-  "steps": ["step1", "step2", ...],
+  "overview": "Brief overview of the experimental method",
+  "steps": [
+    {{
+      "step_id": 1,
+      "description": "First step description",
+      "assignee": "Engineer",
+      "dependencies": [],
+      "expected_output": "What this step produces"
+    }},
+    {{
+      "step_id": 2,
+      "description": "Second step description",
+      "assignee": "RA",
+      "dependencies": [1],
+      "expected_output": "What this step produces"
+    }}
+  ],
+  "execution_order": [1, 2],
   "assignments": [
     {{
       "role": "Engineer",
-      "tasks": ["task1", "task2"],
-      "dependencies": ["dep1", "dep2"]
+      "tasks": ["summary of Engineer tasks"],
     }},
     {{
       "role": "RA",
-      "tasks": ["task1", "task2"],
-      "dependencies": ["dep1", "dep2"]
+      "tasks": ["summary of RA tasks"],
     }}
   ],
   "resources": {{"data": "...", "compute": "..."}},
   "criticisms": ["criticism1", "criticism2"],
   "debate_rounds": 3
 }}
+
+Notes:
+- Assignee must be either "RA" or "Engineer"
+- Dependencies is a list of integers (step IDs); use [] if no dependencies
+- Execution order must respect dependencies
+- RA: wet-lab/manual experiments; Engineer: code/computation
 """
 
 RESULT_ANALYSIS_PROMPT = """Analyze the following experimental results:

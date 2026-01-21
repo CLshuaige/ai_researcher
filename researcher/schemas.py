@@ -69,6 +69,15 @@ class ResearchIdea(BaseModel):
         return "".join(lines)
 
 
+class MethodStep(BaseModel):
+    """Single experimental step with role assignment"""
+    step_id: int = Field(description="Step ID (1-indexed)")
+    description: str = Field(description="Step description")
+    assignee: str = Field(description="RA or Engineer")
+    dependencies: List[int] = Field(default_factory=list, description="Dependent step IDs")
+    expected_output: str = Field(default="", description="Expected output description")
+
+
 class TaskAssignment(BaseModel):
     """Task assignment for RA or Engineer"""
     role: str = Field(description="RA or Engineer")
@@ -79,7 +88,8 @@ class TaskAssignment(BaseModel):
 class ExperimentalMethod(BaseModel):
     """Experimental method design"""
     overview: str = Field(description="Method overview")
-    steps: List[str] = Field(default_factory=list)
+    steps: List[MethodStep] = Field(default_factory=list, description="Structured execution steps")
+    execution_order: List[int] = Field(default_factory=list, description="Step execution order")
     assignments: List[TaskAssignment] = Field(default_factory=list)
     resources: Dict[str, Any] = Field(default_factory=dict, description="Required resources")
     debate_rounds: int = Field(default=0)
@@ -91,10 +101,18 @@ class ExperimentalMethod(BaseModel):
         lines.append(f"## Overview\n{self.overview}\n\n")
 
         if self.steps:
-            lines.append("## Steps\n")
-            for i, step in enumerate(self.steps, 1):
-                lines.append(f"{i}. {step}\n")
-            lines.append("\n")
+            lines.append("## Execution Steps\n")
+            for step in self.steps:
+                lines.append(f"### Step {step.step_id}: {step.description}\n")
+                lines.append(f"- **Assignee**: {step.assignee}\n")
+                if step.dependencies:
+                    lines.append(f"- **Dependencies**: {', '.join(map(str, step.dependencies))}\n")
+                if step.expected_output:
+                    lines.append(f"- **Expected Output**: {step.expected_output}\n")
+                lines.append("\n")
+
+        if self.execution_order:
+            lines.append(f"## Execution Order\n{' → '.join(map(str, self.execution_order))}\n\n")
 
         if self.assignments:
             lines.append("## Task Assignments\n")

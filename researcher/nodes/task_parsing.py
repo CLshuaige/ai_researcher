@@ -13,7 +13,7 @@ from autogen.agentchat.group import (
     FunctionTarget,
     FunctionTargetResult,
     AgentTarget,
-    RevertToUserTarget,
+    TerminateTarget,
 )
 
 from researcher.state import ResearchState
@@ -109,7 +109,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         else:
             asker.handoffs.set_after_work(AgentTarget(formatter))
 
-        formatter.handoffs.set_after_work(RevertToUserTarget())
+        formatter.handoffs.set_after_work(TerminateTarget())
 
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
         
