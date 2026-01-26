@@ -28,6 +28,17 @@ def main():
         help="Project name for workspace organization"
     )
     parser.add_argument(
+        "--workspace-dir", 
+        type=str, 
+        default=None,
+        help="Path to workspace directory"
+    )
+    parser.add_argument(
+        "--clear-workspace",
+        action="store_true",
+        help="Clear workspace directory before starting"
+    )
+    parser.add_argument(
         "--model",
         type=str,
         default=None,
@@ -38,6 +49,12 @@ def main():
         "--list-models",
         action="store_true",
         help="List all available model presets and exit"
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default=None,
+        help="The task node to start the research workflow, choices: ['task_parsing', 'literature_review', 'hypothesis_construction', 'method_design', 'experiment_execution', ...]"
     )
 
     args = parser.parse_args()
@@ -70,12 +87,14 @@ def main():
     # Initialize and run researcher
     researcher = AIResearcher(
         project_name=args.project_name,
+        workspace_dir=args.workspace_dir,
+        clear_workspace=args.clear_workspace,
         model_preset=args.model
     )
     print(f"Workspace: {researcher.get_workspace_path()}")
     print("Starting research workflow...")
 
-    final_state = researcher.run(input_text=input_text, input_file=input_file, config=config)
+    final_state = researcher.run(input_text=input_text, input_file=input_file, task=args.task, config=config)
 
     print(f"\nWorkflow completed. Stage: {final_state['stage']}")
     print(f"Workspace: {researcher.get_workspace_path()}")

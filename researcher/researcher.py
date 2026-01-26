@@ -67,7 +67,7 @@ class AIResearcher:
         self.current_state: Optional[ResearchState] = None
         self.session_id: Optional[str] = None
 
-    def run(self, input_text: str, input_file: Optional[Path] = None, config: dict = None) -> ResearchState:
+    def run(self, input_text: str, input_file: Optional[Path] = None, task: Optional[str] = None, config: dict = None) -> ResearchState:
         """
         Execute the complete research workflow
 
@@ -93,7 +93,7 @@ class AIResearcher:
 
         initial_state: ResearchState = {
             "input_text": input_text,
-            "task": None,
+            "task": task,
             "config": config,
             "literature": None,
             "idea": None,

@@ -69,7 +69,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="report_generation",
-            messages=result.messages,
+            messages=result.chat_history,
             agent_chat_messages=writer.chat_messages
         )
 
