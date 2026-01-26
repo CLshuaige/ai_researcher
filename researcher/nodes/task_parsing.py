@@ -64,7 +64,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
                 current_count += 1
                 ctx["clarification_count"] = current_count
 
-                if "CLEAR:" in content and "UNCLEAR:" not in content:
+                if "==CLEAR==" in content and "==UNCLEAR==" not in content:
                     return FunctionTargetResult(
                         target=AgentTarget(formatter),
                         context_variables=ctx

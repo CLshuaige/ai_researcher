@@ -73,9 +73,10 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
                     for msg in message_list:
                         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
                             history_parts.append(f"[{name}]: {msg['content']}")
-            
+
             debate_history = "\n\n".join(history_parts) if history_parts else "No debate history available."
-            message = METHOD_FORMATTER_PROMPT.format(debate_history=debate_history)
+            debate_rounds = context_variables.get("debate_count", 0)
+            message = METHOD_FORMATTER_PROMPT.format(debate_history=debate_history, debate_rounds=debate_rounds)
             return FunctionTargetResult(
                 target=AgentTarget(formatter),
                 messages=message,
@@ -92,7 +93,7 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
             ctx["debate_count"] = current_count
 
             # Check for READY identifier
-            if "READY:" in content and "NEEDS_REVISION:" not in content:
+            if "==READY==" in content and "==NEEDS_REVISION==" not in content:
                 return FunctionTargetResult(
                     target=FunctionTarget(format_debate_for_formatter),
                     context_variables=ctx

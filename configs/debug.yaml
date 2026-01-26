@@ -38,6 +38,8 @@ researcher:
     mode: "basic"
     code_execution_timeout: 300  # seconds
     code_execution_retries: 2
+    use_virtual_env: true
+    virtual_env_path: "/home/ai_researcher/miniconda3/envs/ai_workspace"
   report_generation:
     mode: "detailed"
     include_references: true

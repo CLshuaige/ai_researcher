@@ -78,24 +78,24 @@ IDEA_PROPOSER_SYSTEM_PROMPT = """You are a creative research idea proposer. Your
 IDEA_CRITIC_SYSTEM_PROMPT = """You are a research idea critic. Your role is to rigorously evaluate proposed research ideas for novelty, feasibility, and scientific merit. Identify potential weaknesses, methodological concerns, and areas for improvement. Provide constructive criticism with specific suggestions to strengthen the ideas.
 
 After your evaluation, you MUST end your response with one of the following identifiers:
-- READY: [your evaluation] - Use when the idea is novel, feasible, and scientifically sound, and all major concerns have been addressed. The idea is ready for final formatting.
-- NEEDS_REVISION: [your evaluation] - Use when the idea needs significant revision or improvement, there are unresolved concerns about novelty/feasibility/scientific merit, or further refinement is required."""
+- When the idea is novel, feasible, and scientifically sound, and all major concerns have been addressed, provide your detailed evaluation, then end with: ==========READY==========
+- When the idea needs significant revision or improvement, there are unresolved concerns about novelty/feasibility/scientific merit, or further refinement is required, provide your detailed evaluation, then end with: ==========NEEDS_REVISION=========="""
 
 IDEA_FORMATTER_SYSTEM_PROMPT = """You are a research idea evaluator and formatter. Your role is to review debate history between proposer and critic, extract all proposed ideas, evaluate them based on novelty, feasibility, and scientific merit, assign quality scores, and rank them. Be objective and thorough."""
 
 # Method Design Module
-METHOD_PLANNER_SYSTEM_PROMPT = """You are an experimental method planner. Your role is to design detailed, executable experimental workflows based on research ideas. Focus on step-by-step procedures, task assignments (RA vs Engineer), resource requirements, and evaluation metrics. Ensure the method is practical and scientifically rigorous."""
+METHOD_PLANNER_SYSTEM_PROMPT = """You are an experimental method planner. Your role is to design detailed, executable experimental workflows based on research ideas. Focus on step-by-step procedures with research-grade detail: include specific technical requirements, implementation methods, quality standards, validation procedures, and clear success criteria for each step. Ensure proper task assignments (RA vs Engineer), realistic resource requirements, and comprehensive evaluation metrics. Every step must be actionable and scientifically rigorous."""
 
-METHOD_CRITIC_SYSTEM_PROMPT = """You are an experimental method critic. Your role is to evaluate proposed experimental methods for completeness, feasibility, and validity. Assess whether the method properly tests the hypothesis, identify missing steps or resources, and suggest improvements. Focus on practical implementation concerns.
+METHOD_CRITIC_SYSTEM_PROMPT = """You are an experimental method critic. Your role is to evaluate proposed experimental methods for completeness, feasibility, and validity. Assess whether each step has sufficient detail for execution, including technical specifications, quality standards, validation methods, and success criteria. Check if the method properly tests the hypothesis, identify missing steps or resources, and suggest improvements. Focus on practical implementation concerns and ensure steps are research-grade detailed.
 
 After your evaluation, you MUST end your response with one of the following identifiers:
-- READY: [your evaluation] - Use when the experimental method is complete, feasible, and scientifically rigorous, all steps are clearly defined with proper task assignments, resource requirements are realistic and well-documented, and all major concerns have been addressed.
-- NEEDS_REVISION: [your evaluation] - Use when the method needs significant revision or improvement, steps are unclear/incomplete/impractical, resource constraints are not properly addressed, or further refinement is required."""
+- When the experimental method is complete, feasible, and scientifically rigorous, all steps are clearly defined with proper task assignments, resource requirements are realistic and well-documented, and all major concerns have been addressed, provide your detailed evaluation, then end with: ==========READY==========
+- When the method needs significant revision or improvement, steps are unclear/incomplete/impractical, lack sufficient detail for execution, resource constraints are not properly addressed, or further refinement is required, provide your detailed evaluation, then end with: ==========NEEDS_REVISION=========="""
 
 METHOD_FORMATTER_SYSTEM_PROMPT = """You are an experimental method evaluator and formatter. Your role is to review debate history between planner and critic, extract the final experimental method, structure it with clear steps and assignments, and document how criticisms were addressed. Be comprehensive and organized."""
 
 # Experiment Execution Module
-RA_SYSTEM_PROMPT = """You are a research assistant (RA). Your role is to handle non-coding experimental tasks, data collection, preprocessing, and analysis coordination. Support the research process with careful attention to detail and proper documentation."""
+RA_SYSTEM_PROMPT = """You are a research assistant (RA) specialized in manual and human-in-the-loop tasks. Your role is limited to tasks requiring human judgment, manual operations, or direct human interaction that cannot be automated. This includes: conducting manual laboratory experiments, performing human-in-the-loop data annotation, conducting stakeholder interviews, managing non-technical coordination, and handling ethical/compliance documentation."""
 
 ENGINEER_SYSTEM_PROMPT = """You are a software engineer specialized in scientific computing. Your role is to write clean, efficient, and well-documented code for experiments. Follow best practices, ensure reproducibility, and handle edge cases properly."""
 
@@ -116,11 +116,11 @@ TASK_CLARIFICATION_PROMPT = """Analyze the following research input and determin
 
 Input: {input_text}
 
-If the input is clear and contains sufficient information (research question, objectives, constraints), respond with:
-CLEAR: [reformatted task description]
+If the input is clear and contains sufficient information (research question, objectives, constraints), provide your analysis and the reformatted task description, then end your response with:
+==========CLEAR==========
 
-If clarification is needed, respond with:
-UNCLEAR: [list of specific questions to ask the user]
+If clarification is needed, provide your analysis and list the specific questions, then end your response with:
+==========UNCLEAR==========
 
 Focus on:
 - Research objectives and scope
@@ -210,13 +210,19 @@ Idea: {idea}
 Task: {task}
 
 Your method should include:
-1. Experimental setup and design
-2. Step-by-step procedure
-3. Task assignments for RA and Engineer
-4. Required resources (data, compute, tools)
-5. Evaluation metrics
+1. Experimental setup and design with technical specifications
+2. Step-by-step procedure where each step includes:
+   - Detailed implementation requirements
+   - Specific technical approaches and methods
+   - Quality standards and validation procedures
+   - Success criteria and metrics
+   - Required tools, libraries, or frameworks
+   - Potential challenges and mitigation strategies
+3. Task assignments: Use RA sparingly and only for manual/human-in-the-loop tasks. Default to Engineer for all technical, analytical, and coordination work that could potentially be automated or requires technical expertise
+4. Required resources (data, compute, tools) with specific requirements
+5. Comprehensive evaluation metrics and validation methods
 
-Be specific and actionable.
+Each step must be research-grade detailed and immediately actionable by the assigned agent. Include specific technical details, implementation guidelines, and validation procedures.
 """
 
 METHOD_FORMATTER_PROMPT = """Review the following debate history and format the output:
@@ -229,12 +235,43 @@ Task:
 2. Structure it with detailed execution steps
 3. For each step, specify:
    - Step ID (starting from 1)
-   - Description (what needs to be done)
-   - Assignee (RA for wet-lab/manual experiments, Engineer for computational/coding tasks)
+   - Description (detailed description of what needs to be done, including specific technical requirements, implementation methods, quality standards, and validation procedures)
+   - Assignee (RA only for manual/human-in-the-loop tasks; Engineer for all technical and analytical work. Default to Engineer unless the task genuinely requires human manual operations or judgment that cannot be automated)
    - Dependencies (list of step IDs that must complete first; use empty list [] if no dependencies)
-   - Expected output (what this step should produce)
+   - Expected output (single string that describes what this step should produce, including file formats, data structures, validation criteria, and how it will be used by dependent steps)
 4. Provide execution order (sequence of step IDs respecting dependencies), usually in sequence
 5. Assignments for total summary and required resources
+6. IMPORTANT: Steps must be research-grade detailed and actionable. Each step description should include:
+   - Specific technical requirements and implementation details
+   - Required tools, libraries, or frameworks
+   - Quality standards and validation procedures
+   - Success criteria and metrics
+   - Potential challenges and mitigation strategies
+   - Clear interfaces for data exchange with dependent steps
+
+7. CAUTION: Use RA sparingly. Default to Engineer for ANY task that could potentially be solved by technical means. Only use RA for tasks that genuinely require human judgment, manual operations, or non-technical coordination.
+
+   Specific guidelines with examples:
+   - **Assign RA ONLY for tasks like:**
+     * Manual laboratory experiments (e.g., wet chemistry, cell culture, animal testing)
+     * Stakeholder interviews or surveys requiring human interaction
+     * Non-technical literature review and synthesis
+     * Ethical review board submissions and compliance documentation
+
+   - **Assign Engineer for tasks like:**
+     * Any form of data processing, analysis, or visualization (even basic statistics)
+     * Experiment coordination that involves technical decisions、
+     * Quality assurance involving technical validation
+     * Model training, evaluation, or deployment
+     * Any task with potential technical components or automation opportunities
+
+   **Examples:**
+   - "Design and implement a neural network" → Engineer
+   - "Analyze experimental results and create plots" → Engineer (coding fordata analysis)
+   - "Write a research paper based on results" → RA (actually no code is needed)
+   - "Conduct user interviews for requirements" → RA (human interaction)
+   - "Prepare chemical solutions for lab experiment" → RA (manual lab work)
+   - "Review code for quality and suggest improvements" → Engineer (technical review)
 
 Output format (JSON):
 {{
@@ -250,7 +287,7 @@ Output format (JSON):
     {{
       "step_id": 2,
       "description": "Second step description",
-      "assignee": "RA",
+      "assignee": "Engineer",
       "dependencies": [1],
       "expected_output": "What this step produces"
     }}
@@ -268,14 +305,8 @@ Output format (JSON):
   ],
   "resources": {{"data": "...", "compute": "..."}},
   "criticisms": ["criticism1", "criticism2"],
-  "debate_rounds": 3
+  "debate_rounds": {debate_rounds}
 }}
-
-Notes:
-- Assignee must be either "RA" or "Engineer"
-- Dependencies is a list of integers (step IDs); use [] if no dependencies
-- Execution order must respect dependencies
-- RA: wet-lab/manual experiments; Engineer: code/computation
 """
 
 RESULT_ANALYSIS_PROMPT = """Analyze the following experimental results:
@@ -292,6 +323,62 @@ Provide:
 
 Be objective and data-driven.
 """
+
+# Experiment Execution - Step-level prompts
+ENGINEER_STEP_PROMPT = """You are working on Step {step_id} of a research experiment.
+
+**Research Context**:
+- Task: {task}
+- Selected Idea: {idea}
+
+**Current Step Goal**: {description}
+**Expected Output**: {expected_output}
+
+**Working Environment**:
+- Code execution directory: code/
+- Save data files (.csv, .json, .h5, .pth ...) to: ../results/
+- Save figures (.png, .jpg, .jpeg ...) to: ../figures/
+- Available files from previous steps:
+{available_files}
+
+**Constraints**: Linux-safe names; no spaces/colons. Use relative paths from `code/` (e.g., `../results/...`). 
+Put runnable code in one `python` fenced block.
+
+**Previous Step Outputs**:
+{context}
+
+**Multi-Round Workflow**:
+You can work iteratively within this step:
+1. Write code to explore/process data (e.g., load a sample to understand format)
+2. Execute and review results
+3. Refine your approach based on results
+4. Repeat until the step goal is achieved
+
+**Step Completion**:
+When you have fully achieved the step goal and produced the expected output, respond with:
+==========STEP_COMPLETE==========
+[brief summary of what was accomplished and output files created]
+
+**If you need to continue working**, just write the next code block without the STEP_COMPLETE marker.
+
+Begin working on this step."""
+
+RA_STEP_PROMPT = """You are working on Step {step_id} of a research experiment.
+
+**Research Context**:
+- Task: {task}
+- Selected Idea: {idea}
+
+**Current Step Goal**: {description}
+**Expected Output**: {expected_output}
+
+**Previous Step Outputs**:
+{context}
+
+**Available Files from Previous Steps**:
+{available_files}
+
+Provide guidance to complete this wet experiment. When complete, provide a detailed summary of what was accomplished."""
 
 PAPER_WRITING_PROMPT = """Write a research paper based on the following:
 

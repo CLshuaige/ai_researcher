@@ -92,7 +92,7 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
             ctx["debate_count"] = current_count
 
             # Check for READY identifier
-            if "READY:" in content and "NEEDS_REVISION:" not in content:
+            if "==READY==" in content and "==NEEDS_REVISION==" not in content:
                 return FunctionTargetResult(
                     target=FunctionTarget(format_debate_for_formatter),
                     context_variables=ctx

@@ -60,7 +60,7 @@ class AIResearcher:
                 shutil.rmtree(self.workspace_dir)
             self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
-        initialize_workspace(self.workspace_dir)
+        # initialize_workspace(self.workspace_dir)
 
         # Build graph with checkpointer
         self.graph = build_researcher_graph()
