@@ -105,6 +105,9 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                     cache_metadata["papers"].append({
                         "arxiv_id": arxiv_id,
                         "title": result.title,
+                        "authors": [author.name for author in result.authors],
+                        "abstract": result.summary,
+                        "year": result.published.year if result.published else None,
                         "query": query,
                         "pdf_file": pdf_filename,
                         "url": result.entry_id
@@ -209,17 +212,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         # def always_trigger(sender):
         #     return True
         #summarizer.register_reply(always_trigger, context_for_summarization_reply_func, position=0)
-        llm_config_tool = {
-                "config_list": [
-                    {
-                        "model": "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-30B-A3B-Instruct-2507",
-                        "base_url": "http://localhost:8001/v1",
-                        "api_key": "EMPTY",
-                        "tool_choice": "required"
-                    }
-                ],
-                "temperature": 0.7
-            }
+        
+        llm_config_tool = get_llm_config(Path("configs/llm_config_tool.json"))
         executor = ConversableAgent(
             name="SearchExecutor",
             human_input_mode="NEVER",
@@ -285,28 +279,26 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         # Extract papers and synthesis from messages
         literature_items = []
         synthesis = None
+        
+        # Get papers from context_variables["searching_results"]
+        searching_results = context.get("searching_results", [])
+        for result_data in searching_results:
+            if result_data.get("success") and "papers" in result_data:
+                for paper in result_data["papers"]:
+                    literature_items.append(LiteratureItem(
+                        title=paper.get("title", ""),
+                        authors=paper.get("authors", []),
+                        abstract=paper.get("abstract", ""),
+                        url=paper.get("url", ""),
+                        year=paper.get("year")
+                    ))
 
+        # Extract synthesis from messages (from summarizer)
         for msg in result.chat_history:
             content = msg.get("content", "")
-
-            if "arxiv_id" in content and isinstance(content, str):
-                try:
-                    import json
-                    data = json.loads(content) if content.startswith("{") else None
-                    if data and data.get("success") and "papers" in data:
-                        for paper in data["papers"]:
-                            literature_items.append(LiteratureItem(
-                                title=paper.get("title", ""),
-                                authors=paper.get("authors", []),
-                                abstract=paper.get("abstract", ""),
-                                url=paper.get("url", ""),
-                                year=paper.get("year")
-                            ))
-                except:
-                    pass
-
             if msg.get("name") == summarizer.name and len(content) > 100:
                 synthesis = content
+                break
 
         if not synthesis:
             raise WorkflowError("Summarizer did not generate synthesis")
@@ -328,9 +320,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         lit_path = get_artifact_path(workspace_dir, "literature")
         save_markdown(literature.to_markdown(), lit_path)
-
-        papers_json_path = lit_dir / "papers.json"
-        save_json([item.model_dump() for item in literature_items], papers_json_path)
 
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 

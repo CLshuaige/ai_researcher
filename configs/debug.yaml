@@ -37,13 +37,38 @@ researcher:
   experiment_execution:
     mode: "basic"
     code_execution_timeout: 300  # seconds
-    code_execution_retries: 2
+    code_execution_retries: 5
     use_virtual_env: true
     virtual_env_path: "/home/ai_researcher/miniconda3/envs/ai_workspace"
   report_generation:
     mode: "detailed"
     include_references: true
+    citations:
+      api_key: ""  # Perplexity API key (leave empty if not using)
+      max_paragraphs_per_section: 50  # Limit paragraphs per section for cost control
   review:
     mode: "basic"
 
 
+  # Context Management Settings
+  context_management:
+    # Global context compression settings
+    enable_compression: true
+    compression_threshold: 0.7  # Compress when token count exceeds of max context (must be <= safety_margin)
+    max_context_tokens: null  # Maximum context tokens (null = auto-infer from model)
+    safety_margin: 0.9  # Safety margin for token limiting
+
+    # Compression settings
+    compression:
+      enable_text_compression: true
+      compression_params: {}  # Additional parameters for TextMessageCompressor
+
+    # Token limiting settings
+    token_limiting:
+      enable_token_limiting: true
+
+    # Message history settings
+    message_history:
+      enable_history_limiting: false
+      max_messages: 10  # Maximum number of messages to keep
+      keep_first_message: true

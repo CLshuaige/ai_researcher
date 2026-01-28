@@ -13,12 +13,14 @@ from researcher.agents.base import (
     RAAgent,
     EngineerAgent,
     AnalystAgent,
-    WriterAgent,
+    PaperWriterAgent,
     ReviewerAgent,
 )
+from researcher.agents.context_manager import AgentContextManager
 
 __all__ = [
     "BaseAgent",
+    "AgentContextManager",
     "AskerAgent",
     "TaskFormatterAgent",
     "LiteratureSearcherAgent",
@@ -32,6 +34,6 @@ __all__ = [
     "RAAgent",
     "EngineerAgent",
     "AnalystAgent",
-    "WriterAgent",
+    "PaperWriterAgent",
     "ReviewerAgent",
 ]

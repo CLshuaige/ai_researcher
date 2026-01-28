@@ -58,7 +58,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
 
         # Extract review from reviewer
         review_text = None
-        for msg in reversed(result.messages):
+        for msg in reversed(result.chat_history):
             if msg.get("name") == reviewer.name and msg.get("content"):
                 review_text = msg["content"]
                 break
@@ -69,7 +69,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="review",
-            messages=result.messages,
+            messages=result.chat_history,
             agent_chat_messages=reviewer.chat_messages
         )
 

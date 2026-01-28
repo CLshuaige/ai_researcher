@@ -17,11 +17,33 @@ def get_default_config_path(config_filename: str = "debug.yaml") -> Path:
     return get_project_root() / "configs" / config_filename
 
 
+def clean_markdown_identifiers(content: str) -> str:
+    """Remove control identifiers from markdown content that should not be saved"""
+    import re
+    
+    identifiers = [
+        r'==========CLEAR==========\s*',
+        r'==========UNCLEAR==========\s*',
+        r'==========READY==========\s*',
+        r'==========NEEDS_REVISION==========\s*',
+        r'==STEP_COMPLETE==\s*',
+        r'==========STEP_COMPLETE==========\s*',
+    ]
+    
+    cleaned = content
+    for pattern in identifiers:
+        # Remove identifier and any trailing whitespace/newlines
+        cleaned = re.sub(pattern, '', cleaned, flags=re.MULTILINE)
+    
+    return cleaned
+
+
 def save_markdown(content: str, filepath: Path) -> None:
     """Save content to markdown file"""
+    cleaned_content = clean_markdown_identifiers(content)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(content)
+        f.write(cleaned_content)
 
 
 def load_markdown(filepath: Path) -> Optional[str]:

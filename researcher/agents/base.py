@@ -15,9 +15,12 @@ from researcher.prompts.templates import (
     RA_SYSTEM_PROMPT,
     ENGINEER_SYSTEM_PROMPT,
     ANALYST_SYSTEM_PROMPT,
-    WRITER_SYSTEM_PROMPT,
+    PAPER_WRITER_SYSTEM_PROMPT,
     REVIEWER_SYSTEM_PROMPT,
 )
+
+
+from researcher.agents.context_manager import AgentContextManager
 
 
 class BaseAgent:
@@ -30,18 +33,52 @@ class BaseAgent:
     def create_agent(
         self,
         llm_config: Dict[str, Any],
-        functions: Optional[List[Callable]] = None
+        enable_context_compression: Optional[bool] = None,
     ) -> ConversableAgent:
+        """Create a ConversableAgent with automatic context compression.
+
+        Automatically loads and applies context compression settings from the global YAML configuration.
+        Context compression is enabled by default unless explicitly disabled.
+
+        Args:
+            llm_config: LLM configuration dictionary.
+            enable_context_compression: Whether to enable automatic context compression.
+                If None, uses setting from global YAML config (default: True).
+                Set to False to disable context compression for this agent.
+
+        Returns:
+            ConversableAgent with context compression capabilities applied.
+        """
         agent = ConversableAgent(
             name=self.name,
             system_message=self.system_prompt,
             llm_config=llm_config,
         )
 
-        if functions:
-            for func in functions:
-                agent.register_for_llm()(func)
-                agent.register_for_execution()(func)
+        global_config = None
+        try:
+            from researcher.utils import load_global_config
+            global_config = load_global_config()
+        except Exception:
+            pass
+
+        should_enable_compression = enable_context_compression
+
+        if global_config and should_enable_compression is not False:
+            context_config = global_config.get("researcher", {}).get("context_management", {})
+
+            # Use global setting if not explicitly overridden
+            if should_enable_compression is None:
+                should_enable_compression = context_config.get("enable_compression", True)
+
+            # Apply compression if enabled
+            if should_enable_compression:
+                AgentContextManager.create_from_config(context_config, agent, llm_config)
+
+                # Apply message history limiting if configured
+                message_history_config = context_config.get("message_history", {})
+                if message_history_config.get("enable_history_limiting", True):
+                    AgentContextManager.apply_message_history_limiting(agent, message_history_config)
 
         return agent
 
@@ -117,9 +154,9 @@ class AnalystAgent(BaseAgent):
 
 
 # Report Generation Module
-class WriterAgent(BaseAgent):
-    def __init__(self, name: str = "Writer"):
-        super().__init__(name, WRITER_SYSTEM_PROMPT)
+class PaperWriterAgent(BaseAgent):
+    def __init__(self, name: str = "PaperWriter"):
+        super().__init__(name, PAPER_WRITER_SYSTEM_PROMPT)
 
 
 # Review Module
