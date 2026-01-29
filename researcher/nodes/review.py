@@ -29,6 +29,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         if not paper:
             # Try .md extension
             paper_md_path = get_artifact_path(workspace_dir, "paper").with_suffix('.md')
+            log_stage(workspace_dir, "review", f"Loading paper from markdown file: {paper_md_path}")
             if paper_md_path.exists():
                 with open(paper_md_path, 'r', encoding='utf-8') as f:
                     paper = f.read()

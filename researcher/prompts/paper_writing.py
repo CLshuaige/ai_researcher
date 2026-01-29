@@ -39,12 +39,14 @@ Follow ICML2026 paper structure conventions:
     {{
       "id": 1,
       "title": "Introduction",
-      "description": "Detailed description of what to cover"
+      "description": "Detailed description of what to cover",
+      "guidelines": "Advanced guidelines for the section"
     }},
     {{
       "id": 2,
       "title": "Related Work",
-      "description": "Detailed description of what to cover"
+      "description": "Detailed description of what to cover",
+      "guidelines": "Advanced guidelines for the section"
     }}
   ]
 }}
@@ -389,7 +391,7 @@ Guidelines:
 {content_instruction}"""
 
 
-def section_prompt(section_id: int, section_title: str, section_description: str,
+def section_prompt(section_id: int, section_title: str, section_description: str, section_guidelines: str,
                   title: str, abstract: str, completed_sections: str,
                   task: str, idea: str, method_summary: str, results_summary: str, output_type: str = "latex") -> str:
     """Generate prompt for writing a specific section (generic fallback)"""
@@ -414,6 +416,7 @@ def section_prompt(section_id: int, section_title: str, section_description: str
             "In <SECTION_TEXT>, place the section content in Markdown. "
         )
     return f"""Write the "{section_title}" section for a research paper in {format_desc}.
+You are provided with these information and previous sections:
 
 Section ID: {section_id}
 Section Title: {section_title}
@@ -425,9 +428,6 @@ Paper Title:
 
 Paper Abstract:
 {abstract}
-
-Previous Sections (for context):
-{completed_sections}
 
 Research Task:
 {task}
@@ -441,12 +441,11 @@ Method Summary:
 Results Summary:
 {results_summary}
 
+Previous Sections (for context):
+{completed_sections}
+
 Guidelines:
-- Follow the section description carefully
-- Connect with previous sections for coherence
-- Do NOT create subsections unless the section description explicitly requires them
-- Do NOT add citations yet (use placeholders if needed)
-- Ensure technical accuracy and academic writing style
+{section_guidelines}
 
 **Output Format**:
 {output_block}

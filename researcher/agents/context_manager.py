@@ -73,7 +73,7 @@ class EITextMessageCompressor(TextMessageCompressor):
             total_savings += savings
 
         self._recent_tokens_savings = total_savings
-        print(f"+++++++++++++++++++++++++++++++++\n{processed_messages}\n+++++++++++++++++++++++++++++++++")
+        #print(f"+++++++++++++++++++++++++++++++++\n{processed_messages}\n+++++++++++++++++++++++++++++++++")
         return processed_messages
 
 

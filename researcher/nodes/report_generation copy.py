@@ -20,7 +20,7 @@ from autogen.agentchat.contrib.capabilities import transform_messages
 from autogen.agentchat.contrib.capabilities.transforms import TextMessageCompressor
 
 from researcher.state import ResearchState
-from researcher.agents import PaperWriterAgent, OutlinerAgent, SectionWriterAgent
+from researcher.agents import PaperWriterAgent
 from researcher.utils import (
     log_stage,
     get_artifact_path,
@@ -74,7 +74,6 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
 
         # Create agent with automatic context compression from global config
         paper_writer = PaperWriterAgent().create_agent(llm_config)
-        outliner = OutlinerAgent().create_agent(llm_config)
 
         # If message is extremely long, here to consider to shorten it
         method_summary = method_content
@@ -95,8 +94,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         })
 
         pattern = DefaultPattern(
-            initial_agent=outliner,
-            agents=[paper_writer, outliner],
+            initial_agent=paper_writer,
+            agents=[paper_writer],
             context_variables=initial_context,
             group_manager_args={"llm_config": llm_config}
         )
@@ -155,40 +154,26 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                 
                 ctx["paper_metadata"]["title"] = title
                 ctx["paper_metadata"]["abstract"] = abstract_text
+                
+                log_stage(workspace_dir, "report_generation",
+                         f"Abstract generated (initial version)")
 
-                # # Perform self-reflection to improve abstract
-                # reflection_prompt = abstract_prompt(
-                #     title=title,
-                #     abstract=abstract_text,
-                #     idea=ctx.get("idea", ""),
-                #     method_summary=ctx.get("method_summary", ""),
-                #     results_summary=ctx.get("results_summary", ""),
-                #     output_type=output_type
-                # )
-                
-                # # Update handoff to process reflection and then move to keywords
-                # paper_writer.handoffs.set_after_work(FunctionTarget(process_abstract_reflection))
-                
-                # return FunctionTargetResult(
-                #     target=AgentTarget(paper_writer),
-                #     messages=reflection_prompt,
-                #     context_variables=ctx
-                # )
-                    
-                # Switch to keywords generation (keywords are extracted from abstract)
-                ctx["writing_mode"] = "keywords"
-                ctx["abstract_parse_attempts"] = 0
-                paper_writer.handoffs.set_after_work(FunctionTarget(parse_keywords_and_dispatch))
-                
-                # Generate keywords prompt based on abstract and title
-                keywords_prompt_text = keywords_prompt(
+                # Perform self-reflection to improve abstract
+                reflection_prompt = abstract_prompt(
+                    title=title,
                     abstract=abstract_text,
-                    title=ctx["paper_metadata"].get("title", "")
+                    idea=ctx.get("idea", ""),
+                    method_summary=ctx.get("method_summary", ""),
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
                 )
+                
+                # Update handoff to process reflection and then move to keywords
+                paper_writer.handoffs.set_after_work(FunctionTarget(process_abstract_reflection))
                 
                 return FunctionTargetResult(
                     target=AgentTarget(paper_writer),
-                    messages=keywords_prompt_text,
+                    messages=reflection_prompt,
                     context_variables=ctx
                 )
 
@@ -267,8 +252,6 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             outline = ctx.get("outline_structure", {})
             sections = outline.get("sections", [])
 
-            #history_messages
-
             if current_idx >= len(sections):
                 # All sections complete, terminate
                 return FunctionTargetResult(
@@ -284,7 +267,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             # Use intelligent summarization: keep full content for recent sections, summaries for older ones
             prev_sections_summary = []
             prev_sections_content = {}
-            keep_full_count = 100  # Keep full content for last 2 sections
+            keep_full_count = 2  # Keep full content for last 2 sections
             start_idx = max(0, current_idx - keep_full_count - 1)  # Include one more for summary
             
             for i in range(start_idx, current_idx):
@@ -294,7 +277,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                         # Keep full content for recent sections
                         prev_sections_content[section_title] = completed[i].get('content', '')
                         prev_sections_summary.append(
-                            f"Section {i+1} ({section_title}): {prev_sections_content[section_title]}"
+                            f"Section {i+1} ({section_title}): [Full content provided below]"
                         )
                     else:
                         # Use summary for older sections
@@ -305,22 +288,57 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             
             prev_sections_str = "\n".join(prev_sections_summary) if prev_sections_summary else "No previous sections"
 
-
-            # Use generic section prompt for other sections
-            prompt = section_prompt(
-                section_id=section["id"],
-                section_title=section["title"],
-                section_description=section["description"],
-                section_guidelines=section["guidelines"],
-                title=paper_meta.get("title", ""),
-                abstract=paper_meta.get("abstract", ""),
-                completed_sections=prev_sections_str,
-                task=ctx.get("task", ""),
-                idea=ctx.get("idea", ""),
-                method_summary=ctx.get("method_summary", ""),
-                results_summary=ctx.get("results_summary", ""),
-                output_type=output_type
-            )
+            # Select appropriate prompt based on section type
+            section_title = section["title"].lower()
+            if "introduction" in section_title:
+                prompt = introduction_prompt(
+                    title=paper_meta.get("title", ""),
+                    abstract=paper_meta.get("abstract", ""),
+                    idea=ctx.get("idea", ""),
+                    method_summary=ctx.get("method_summary", ""),
+                    output_type=output_type
+                )
+            elif "method" in section_title or "methodology" in section_title:
+                prompt = methods_prompt(
+                    title=paper_meta.get("title", ""),
+                    abstract=paper_meta.get("abstract", ""),
+                    introduction=prev_sections_content.get("Introduction", ""),
+                    method_summary=ctx.get("method_summary", ""),
+                    output_type=output_type
+                )
+            elif "result" in section_title:
+                prompt = results_prompt(
+                    title=paper_meta.get("title", ""),
+                    abstract=paper_meta.get("abstract", ""),
+                    introduction=prev_sections_content.get("Introduction", ""),
+                    methods=prev_sections_content.get("Methods", "") or prev_sections_content.get("Methodology", ""),
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
+                )
+            elif "conclusion" in section_title:
+                prompt = conclusions_prompt(
+                    title=paper_meta.get("title", ""),
+                    abstract=paper_meta.get("abstract", ""),
+                    introduction=prev_sections_content.get("Introduction", ""),
+                    methods=prev_sections_content.get("Methods", "") or prev_sections_content.get("Methodology", ""),
+                    results=prev_sections_content.get("Results", ""),
+                    output_type=output_type
+                )
+            else:
+                # Use generic section prompt for other sections
+                prompt = section_prompt(
+                    section_id=section["id"],
+                    section_title=section["title"],
+                    section_description=section["description"],
+                    title=paper_meta.get("title", ""),
+                    abstract=paper_meta.get("abstract", ""),
+                    completed_sections=prev_sections_str,
+                    task=ctx.get("task", ""),
+                    idea=ctx.get("idea", ""),
+                    method_summary=ctx.get("method_summary", ""),
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
+                )
 
             log_stage(workspace_dir, "report_generation",
                      f"Writing section {current_idx + 1}/{len(sections)}: {section['title']}")
@@ -330,18 +348,6 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                 messages=prompt,
                 context_variables=ctx
             )
-        
-        # Step 5.5 Hook Function: Manage the histroy messages of the paper writer
-        def manage_history_messages(messages: list[dict]) -> list[dict]:
-            """
-            Only keep the system message and the last message for the paper writer.
-            """
-            ctx: ContextVariables = paper_writer.context_variables
-            if ctx["writing_mode"] == "section":
-                # The system message is in the default messages
-                return [messages[-1]] # Last message
-            else:
-                return messages
 
         # ========================================================================
         # Step 6: Section Completion Handler (Save Section and Move to Next)
@@ -406,13 +412,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             ctx["current_section_index"] = current_idx + 1
             return section_dispatcher(output, ctx)
 
-        # Register the hook function
-        paper_writer.register_hook(
-                "process_all_messages_before_reply",
-                manage_history_messages
-            )
         # Set initial handoff for outline generation
-        outliner.handoffs.set_after_work(FunctionTarget(parse_outline_and_dispatch))
+        paper_writer.handoffs.set_after_work(FunctionTarget(parse_outline_and_dispatch))
 
         # Generate detailed outline prompt
         outline_prompt_text = outline_prompt(
@@ -501,7 +502,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                 output_md_path.write_text(content_md, encoding='utf-8')
                 log_stage(workspace_dir, "report_generation", 
                          f"Markdown generated at: {output_md_path}")
-                paper_dir = output_md_path
+                return output_md_path
         except Exception as e:
             log_stage(workspace_dir, "report_generation", 
                      f"[!] Warning: Failed to compile final PDF: {str(e)}")
@@ -562,7 +563,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
 
         return {
             "task": task,
-            #"paper_title": paper_meta.get("title", ""),
+            "paper_title": paper_meta.get("title", ""),
             "paper_dir": str(paper_dir),
             "stage": "report_generation"
         }
