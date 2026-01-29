@@ -49,12 +49,14 @@ from researcher.latex.presets import Journal, get_preset
 def report_generation_node(state: ResearchState) -> Dict[str, Any]:
     """Generate research paper with LaTeX structure"""
     workspace_dir = state["workspace_dir"]
-    log_stage(workspace_dir, "report_generation", "Starting report generation")
 
     try:
         # Load configuration
         config = state["config"]["researcher"]["report_generation"]
         mode = config["mode"]
+        skip_generation = config["skip_generation"]
+        compiler_verification = config["compiler_verification"]
+        output_type = config["output_type"]
         include_references = config["include_references"]
         citations_config = config["citations"]
 
@@ -88,6 +90,7 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             "idea": selected_idea,
             "method_summary": method_summary,
             "results_summary": results_summary,
+            "compiler_verification": compiler_verification
         })
 
         pattern = DefaultPattern(
@@ -161,7 +164,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                     abstract=abstract_text,
                     idea=ctx.get("idea", ""),
                     method_summary=ctx.get("method_summary", ""),
-                    results_summary=ctx.get("results_summary", "")
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
                 )
                 
                 # Update handoff to process reflection and then move to keywords
@@ -291,14 +295,16 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                     title=paper_meta.get("title", ""),
                     abstract=paper_meta.get("abstract", ""),
                     idea=ctx.get("idea", ""),
-                    method_summary=ctx.get("method_summary", "")
+                    method_summary=ctx.get("method_summary", ""),
+                    output_type=output_type
                 )
             elif "method" in section_title or "methodology" in section_title:
                 prompt = methods_prompt(
                     title=paper_meta.get("title", ""),
                     abstract=paper_meta.get("abstract", ""),
                     introduction=prev_sections_content.get("Introduction", ""),
-                    method_summary=ctx.get("method_summary", "")
+                    method_summary=ctx.get("method_summary", ""),
+                    output_type=output_type
                 )
             elif "result" in section_title:
                 prompt = results_prompt(
@@ -306,7 +312,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                     abstract=paper_meta.get("abstract", ""),
                     introduction=prev_sections_content.get("Introduction", ""),
                     methods=prev_sections_content.get("Methods", "") or prev_sections_content.get("Methodology", ""),
-                    results_summary=ctx.get("results_summary", "")
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
                 )
             elif "conclusion" in section_title:
                 prompt = conclusions_prompt(
@@ -314,7 +321,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                     abstract=paper_meta.get("abstract", ""),
                     introduction=prev_sections_content.get("Introduction", ""),
                     methods=prev_sections_content.get("Methods", "") or prev_sections_content.get("Methodology", ""),
-                    results=prev_sections_content.get("Results", "")
+                    results=prev_sections_content.get("Results", ""),
+                    output_type=output_type
                 )
             else:
                 # Use generic section prompt for other sections
@@ -328,7 +336,8 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                     task=ctx.get("task", ""),
                     idea=ctx.get("idea", ""),
                     method_summary=ctx.get("method_summary", ""),
-                    results_summary=ctx.get("results_summary", "")
+                    results_summary=ctx.get("results_summary", ""),
+                    output_type=output_type
                 )
 
             log_stage(workspace_dir, "report_generation",
@@ -380,10 +389,11 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             section_path.write_text(content, encoding='utf-8')
 
             # Compile and verify LaTeX, auto-fix if needed
-            content = _compile_and_fix_section(
-                content, section_title, section_path, paper_dir, 
-                Journal.ICML2026, workspace_dir, paper_writer, llm_config
-            )
+            if ctx["compiler_verification"]:
+                content = _compile_and_fix_section(
+                    content, section_title, section_path, paper_dir, 
+                    Journal.ICML2026, workspace_dir, paper_writer, llm_config
+                )
 
             # Store summary and content in context
             completed = ctx.get("completed_sections", {})
@@ -413,68 +423,86 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             results_summary=results_summary
         )
 
-        log_stage(workspace_dir, "report_generation", "Generating paper outline")
-
+        paper_dir = workspace_dir / "paper"
+        main_tex_path = paper_dir / "main.tex"
         # ========================================================================
         # Initiate group chat
         # ========================================================================
-        result, context, last_agent = initiate_group_chat(
-            pattern=pattern,
-            messages=outline_prompt_text,
-            max_rounds=len(initial_context.get("outline_structure", {}).get("sections", [])) + 5 if initial_context.get("outline_structure") else 20
-        )
-
-        save_agent_history(
-            workspace_dir=workspace_dir,
-            node_name="report_generation",
-            messages=result.chat_history,
-            agent_chat_messages={
-                paper_writer.name: paper_writer.chat_messages
-            }
-        )
-
-        # ========================================================================
-        # Generate main.tex and references.bib files
-        # ========================================================================
-        paper_dir = workspace_dir / "paper"
-        paper_meta = context.get("paper_metadata", {})
-        outline = context.get("outline_structure", {})
-
-        keywords = paper_meta.get("keywords", "")
-        main_tex_content = _generate_main_tex(
-            paper_meta.get("title", "Research Paper"),
-            paper_meta.get("abstract", ""),
-            outline.get("sections", []),
-            paper_dir,
-            Journal.ICML2026,
-            keywords=keywords
-        )
-
-        main_tex_path = paper_dir / "main.tex"
-        main_tex_path.write_text(main_tex_content, encoding='utf-8')
-
-        references_bib_path = paper_dir / "references.bib"
-        references_bib_path.write_text(bibliography_bib, encoding='utf-8')
-
-        # Copy LaTeX template files to paper directory
-        _copy_latex_template_files(paper_dir, Journal.ICML2026)
-
-        log_stage(workspace_dir, "report_generation",
-                 f"Completed. Generated {len(outline.get('sections', []))} sections")
-        
-        # Compile final PDF document
-        log_stage(workspace_dir, "report_generation", "Compiling final PDF document...")
-        try:
-            bib_path = paper_dir / "references.bib"
-            compile_success, error_msg = _run_latex_compilation(
-                main_tex_path, paper_dir, bib_path, timeout=60, cleanup=True
+        if not skip_generation:
+            log_stage(workspace_dir, "report_generation", "Starting report generation")
+            log_stage(workspace_dir, "report_generation", "Generating paper outline")
+            result, context, last_agent = initiate_group_chat(
+                pattern=pattern,
+                messages=outline_prompt_text,
+                max_rounds=len(initial_context.get("outline_structure", {}).get("sections", [])) + 5 if initial_context.get("outline_structure") else 20
             )
-            if compile_success:
+
+            save_agent_history(
+                workspace_dir=workspace_dir,
+                node_name="report_generation",
+                messages=result.chat_history,
+                agent_chat_messages={
+                    paper_writer.name: paper_writer.chat_messages
+                }
+            )
+
+            # ========================================================================
+            # Generate main.tex and references.bib files
+            # ========================================================================
+            
+            paper_meta = context.get("paper_metadata", {})
+            outline = context.get("outline_structure", {})
+
+            keywords = paper_meta.get("keywords", "")
+            main_tex_content = _generate_main_tex(
+                paper_meta.get("title", "Research Paper"),
+                paper_meta.get("abstract", ""),
+                outline.get("sections", []),
+                paper_dir,
+                Journal.ICML2026,
+                keywords=keywords
+            )
+
+            main_tex_path.write_text(main_tex_content, encoding='utf-8')
+
+            references_bib_path = paper_dir / "references.bib"
+            references_bib_path.write_text(bibliography_bib, encoding='utf-8')
+
+            # Copy LaTeX template files to paper directory
+            _copy_latex_template_files(paper_dir, Journal.ICML2026)
+
+            log_stage(workspace_dir, "report_generation",
+                    f"Completed. Generated {len(outline.get('sections', []))} sections")
+            
+            # Compile final PDF document
+            log_stage(workspace_dir, "report_generation", "Compiling final document...")
+        
+        log_stage(workspace_dir, "report_generation", f"Skipping generation, saving report as format of {output_type}")
+
+        try:
+            if output_type == "pdf":
+                bib_path = paper_dir / "references.bib"
+                compile_success, error_msg = _run_latex_compilation(
+                    main_tex_path, paper_dir, bib_path, timeout=60, cleanup=True
+                )
+                if compile_success:
+                    log_stage(workspace_dir, "report_generation", 
+                            "[✓] Final PDF document compiled successfully")
+                else:
+                    log_stage(workspace_dir, "report_generation", 
+                            f"[!] Warning: Final PDF compilation had errors: {error_msg[:200] if error_msg else 'Unknown error'}")
+
+            elif output_type == "markdown":
+                from ..latex.latex_to_markdown import parse_main_tex
+                output_md_path = paper_dir / "output.md"
+                content_md = parse_main_tex(main_tex_path)
                 log_stage(workspace_dir, "report_generation", 
-                         "[✓] Final PDF document compiled successfully")
-            else:
+                         f"[✓] Markdown generated")
+
+                output_md_path.write_text(content_md, encoding='utf-8')
                 log_stage(workspace_dir, "report_generation", 
-                         f"[!] Warning: Final PDF compilation had errors: {error_msg[:200] if error_msg else 'Unknown error'}")
+                         f"Markdown generated at: {output_md_path}")
+                return output_md_path
         except Exception as e:
             log_stage(workspace_dir, "report_generation", 
                      f"[!] Warning: Failed to compile final PDF: {str(e)}")
@@ -529,6 +557,9 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             else:
                 log_stage(workspace_dir, "report_generation", 
                          "Warning: include_references enabled but API key not provided.")
+                
+
+
 
         return {
             "task": task,
@@ -569,6 +600,8 @@ def _clean_section(text: str, section_name: str) -> str:
     text = text.replace(r"```latex", "")
     text = text.replace(r"```", "")
     text = text.replace(r"\usepackage{amsmath}", "")
+    # md
+    text = text.replace(r"```markdown", "")
     return text.strip()
 
 

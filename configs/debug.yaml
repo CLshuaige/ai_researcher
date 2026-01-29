@@ -42,7 +42,10 @@ researcher:
     virtual_env_path: "/home/ai_researcher/miniconda3/envs/ai_workspace"
   report_generation:
     mode: "detailed"
-    include_references: true
+    skip_generation: False
+    compiler_verification: False
+    output_type: "markdown"
+    include_references: False
     citations:
       api_key: ""  # Perplexity API key (leave empty if not using)
       max_paragraphs_per_section: 50  # Limit paragraphs per section for cost control
