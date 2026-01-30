@@ -42,6 +42,7 @@ researcher:
     virtual_env_path: "/home/ai_researcher/miniconda3/envs/ai_workspace"
   report_generation:
     mode: "detailed"
+    file_type: "markdown"
     include_references: true
     citations:
       api_key: ""  # Perplexity API key (leave empty if not using)

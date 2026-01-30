@@ -160,7 +160,15 @@ class ExperimentResult(BaseModel):
 
         if self.data_paths:
             lines.append("## Data Files\n")
-            for path in self.data_paths:
+            max_display = 20
+            if len(self.data_paths) <= max_display:
+                display_paths = self.data_paths
+            else:
+                display_paths = self.data_paths[:max_display-1]
+                truncation_message = f"... and {len(self.data_paths) - (max_display - 1)} more files"
+                display_paths.append(truncation_message)
+
+            for path in display_paths:
                 lines.append(f"- {path}\n")
             lines.append("\n")
 

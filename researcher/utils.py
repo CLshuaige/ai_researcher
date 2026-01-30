@@ -1,7 +1,9 @@
+from collections import Counter
 from pathlib import Path
 from typing import Optional, Any, Dict
 from datetime import datetime
 import json
+import re
 
 #from researcher.config import config
 from researcher.exceptions import WorkflowError
@@ -240,4 +242,126 @@ def load_session_metadata(workspace_dir: Path) -> Optional[Dict[str, Any]]:
     """Load session metadata from workspace"""
     session_file = workspace_dir / "session.json"
     return load_json(session_file)
+
+
+def deduplicate_long_repeats(sender, message, recipient, silent):
+    """Hook function for process_message_before_send to deduplicate long repeats in messages.
+
+    Detects and removes duplicate content blocks in individual messages before sending.
+    Uses line normalization (digits→placeholder, collapse whitespace) and pattern matching
+    to identify exact duplicates and repetitive pattern blocks within a single message.
+
+    For LSH/near-duplicate detection at scale, consider datasketch.MinHashLSH.
+
+    Args:
+        sender: The sending ConversableAgent
+        message: The message being sent (str or dict)
+        recipient: The recipient Agent
+        silent: Whether the message is silent
+
+    Returns:
+        The processed message (str or dict) with duplicate blocks replaced by summary placeholders
+    """
+    from autogen import ConversableAgent, Agent
+    from typing import Union, Dict, Any
+
+    # Extract content from message
+    if isinstance(message, dict):
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            return message
+    else:
+        content = str(message)
+
+    if not content:
+        return message
+
+    def _norm(line: str) -> str:
+        """Normalize line: collapse whitespace and replace digits with placeholder"""
+        s = re.sub(r"\s+", " ", line.strip())
+        if not s:
+            return ""
+
+        normalized = re.sub(r"\d+", "0", s)
+
+        if "Loading" in normalized and ("|" in normalized or "%" in normalized):
+            # "Loading weights: 99%|█████████▊| 393/398 [00:00<00:00, 6747.06it/s, Materializing param=...]"
+            # -> "Loading weights: 0%|██████████| 0/0 [0:0<0:0, 0.0it/s, Materializing param=]"
+            normalized = re.sub(r'\d+%\|.*\| \d+/\d+ \[.*?\]', '0%|██████████| 0/0 [0:0<0:0, 0.0it/s', normalized)
+            normalized = re.sub(r'Materializing param=.*', 'Materializing param=', normalized)
+
+        # File paths pattern
+        elif "/" in normalized or "\\" in normalized:
+            # For paths, keep only the general structure
+            parts = re.split(r"[\/\\]", normalized)
+            for i, part in enumerate(parts):
+                if "." in part and any(ext in part for ext in [".jpg", ".png", ".json", ".py", ".txt", ".md", ".wav"]):
+                    parts[i] = "file.0"
+                elif part.replace("0", "").replace(".", "").replace("-", "").replace("_", "") == "":
+                    parts[i] = "0"
+                elif "_" in part and any(x in part for x in ["coco", "hateful_memes", "mimic_cxr"]):
+                    dataset_match = re.search(r'(coco|hateful_memes|mimic_cxr)_(\d+)', part)
+                    if dataset_match:
+                        parts[i] = f"{dataset_match.group(1)}_0"
+            normalized = "/".join(parts)
+
+        return normalized
+
+    lines = content.split("\n")
+
+    # First pass: normalize all lines and identify frequent patterns
+    normalized_lines = [_norm(line) for line in lines]
+    pattern_counts = Counter(normalized_lines)
+
+    # Find patterns that appear frequently
+    frequent_patterns = {pattern: count for pattern, count in pattern_counts.items() if count > 5}
+
+    if frequent_patterns:
+        result: list[str] = []
+        i = 0
+
+        while i < len(lines):
+            if not lines[i].strip():
+                result.append(lines[i])
+                i += 1
+                continue
+
+            current_norm = normalized_lines[i]
+
+            # Check if this line matches a frequent pattern
+            if current_norm in frequent_patterns:
+                start = i
+                pattern = current_norm
+                i += 1
+                while i < len(lines) and normalized_lines[i] == pattern:
+                    i += 1
+
+                block_size = i - start
+                if block_size >= 5:  # Only compress if we have 5+ consecutive similar lines
+                    sample_lines = [lines[j].strip() for j in range(start, min(start + 3, i))]
+                    sample_text = " | ".join(sample_lines[:2])  # Show first 2 samples
+                    if len(sample_lines) > 2:
+                        sample_text += " | ..."
+
+                    result.append(f"[Compressed {block_size} similar file paths: {sample_text}]")
+                    continue
+
+            result.append(lines[i])
+            i += 1
+    else:
+        # No frequent patterns, keep original content
+        result = lines
+
+    new_text = "\n".join(result)
+
+    # Return the modified message
+    if isinstance(message, dict):
+        if new_text != content:
+            modified_message = dict(message)
+            modified_message["content"] = new_text
+            return modified_message
+        else:
+            return message
+    else:
+        return new_text
 

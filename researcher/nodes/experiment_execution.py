@@ -13,6 +13,8 @@ from autogen.agentchat.group import (
     FunctionTargetResult,
     TerminateTarget,
 )
+from autogen.agentchat.contrib.capabilities import transform_messages
+from autogen.agentchat.contrib.capabilities.transforms import MessageHistoryLimiter, MessageTokenLimiter
 
 from researcher.state import ResearchState
 from researcher.schemas import ExperimentResult, MethodStep, ResearchIdea
@@ -24,8 +26,14 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     save_agent_history,
+    deduplicate_long_repeats,
 )
-from researcher.prompts.templates import RESULT_ANALYSIS_PROMPT, ENGINEER_STEP_PROMPT, RA_STEP_PROMPT
+from researcher.prompts.templates import (
+    RESULT_ANALYSIS_PROMPT,
+    ENGINEER_STEP_PROMPT,
+    RA_STEP_PROMPT,
+    ENGINEER_DEBUG_PROMPT,
+)
 from researcher.exceptions import WorkflowError
 
 
@@ -49,7 +57,17 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         virtual_env_path = Path(config["virtual_env_path"])
 
         llm_config = get_llm_config()
-        exp_dir = workspace_dir / "experiments"
+
+        # Create Engineer-specific LLM config with lower temperature for more deterministic code generation
+        engineer_llm_config = dict(llm_config)
+        if "config_list" in engineer_llm_config:
+            for config in engineer_llm_config["config_list"]:
+                config["temperature"] = 0.3
+
+        # Create experiment directory with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        exp_dir = workspace_dir / "experiments" / f"code_{timestamp}"
         exp_dir.mkdir(parents=True, exist_ok=True)
 
         steps, execution_order = parse_method_markdown(method_content)
@@ -72,8 +90,31 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 raise WorkflowError(f"Virtual environment not found: {venv_path}")
 
         ra = RAAgent().create_agent(llm_config)
-        engineer = EngineerAgent().create_agent(llm_config)
+        engineer = EngineerAgent().create_agent(engineer_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
+
+        # Limit Engineer's message history to preserve system prompt and recent exchanges,
+        # avoiding destructive summarization of code that could make it non-executable
+        engineer_history_limiter = MessageHistoryLimiter(
+            max_messages = 6,
+            keep_first_message = True,
+        )
+        engineer_token_limiter = MessageTokenLimiter(
+            max_tokens=25000,
+            max_tokens_per_message=10000,
+            min_tokens=15000,
+            model="gpt-4-32k"
+        )
+
+        transform_messages.TransformMessages(
+            transforms=[
+                engineer_history_limiter,
+                engineer_token_limiter
+            ]
+        ).add_to_agent(engineer)
+        
+        # Deduplicate long repeats in Engineer's messages such as path results
+        engineer.register_hook("process_message_before_send", deduplicate_long_repeats)
 
         bootstrap_executor = LocalCommandLineCodeExecutor(
             timeout=timeout,
@@ -104,9 +145,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             """Execute code directly by creating CodeBlock, bypassing message parsing"""
             # Extract code content from the code block
             if code_text.startswith("```"):
-                # Remove the opening fence
                 code_start = code_text.find("\n", code_text.find("```")) + 1
-                # Remove the closing fence
                 code_end = code_text.rfind("```")
                 code_content = code_text[code_start:code_end].strip()
             else:
@@ -115,7 +154,6 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             code_block = CodeBlock(code=code_content, language="python")
             result = executor.execute_code_blocks([code_block])
 
-            # Format result like autogen's default output
             if result.exit_code == 0:
                 output = f"exitcode: {result.exit_code} (execution succeeded)\nCode output: {result.output}"
             else:
@@ -131,13 +169,12 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             return name[:50].strip('_').lower() or 'step'
         
         def get_step_dir(step: MethodStep) -> Path:
-            """Get directory for a specific step based on its description"""
-            dir_name = sanitize_dir_name(step.description)
-            step_dir = exp_dir / f"step_{step.step_id}_{dir_name}"
+            """Get unified experiment directory for all steps"""
+            step_dir = exp_dir
             step_dir.mkdir(parents=True, exist_ok=True)
             try:
                 import json
-                meta_path = step_dir / "step_meta.json"
+                meta_path = step_dir / f"step_{step.step_id}_meta.json"
                 if not meta_path.exists():
                     meta = {
                         "step_id": step.step_id,
@@ -174,7 +211,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     result = step_results.get(step_id, {})
                     status = result.get("status", "unknown")
                     output_text = result.get("output", "")
-                    results_summary.append(f"Step {step_id} ({status}): {output_text[:200]}")
+                    results_summary.append(f"Step {step_id} ({status}): {output_text}")
 
                 message = RESULT_ANALYSIS_PROMPT.format(
                     method=method_content,
@@ -235,6 +272,20 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             context_str = "\n".join(dep_summaries) if dep_summaries else "No previous results"
             files_str = "\n".join([f"- {f}" for f in available_files]) if available_files else "No files available from previous steps"
 
+            # Deduplicate and limit available files to prevent context length explosion
+            # if available_files:
+            #     unique_files = list(set(available_files))  # Remove duplicates
+            #     max_files_display = 15  # Limit to prevent context overflow
+
+            #     if len(unique_files) <= max_files_display:
+            #         files_str = "\n".join([f"- {f}" for f in unique_files])
+            #     else:
+            #         files_str = f"Total {len(unique_files)} files available from previous steps.\n"
+            #         files_str += "Showing first 15 files as examples:\n"
+            #         files_str += "\n".join([f"- {f}" for f in unique_files[:15]])
+            # else:
+            #     files_str = "No files available from previous steps"
+
             selected_idea_content = extract_selected_idea(idea)
 
             # Store step info in context for completion detection
@@ -271,6 +322,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     context_variables=context_variables
                 )
             else:  # Engineer
+                timestamp = exp_dir.name.replace("code_", "")
                 prompt = ENGINEER_STEP_PROMPT.format(
                     step_id=step.step_id,
                     task=task,
@@ -278,7 +330,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     description=step.description,
                     expected_output=step.expected_output,
                     available_files=files_str,
-                    context=context_str
+                    context=context_str,
+                    timestamp=timestamp
                 )
                 return FunctionTargetResult(
                     target=AgentTarget(engineer),
@@ -340,7 +393,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 context_variables["last_execution_output"] = output_text
                 context_variables["last_execution_exit_code"] = exit_code if exit_code is not None else 0
                 
-                step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir / f"step_{step_id}"))
+                step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir))
                 log_file = step_dir / f"step_{step_id}_execution.log"
                 with open(log_file, 'w', encoding='utf-8') as f:
                     f.write(output_text)
@@ -403,7 +456,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     if step.assignee == "Engineer":
                         return FunctionTargetResult(
                             target=AgentTarget(engineer),
-                            messages=f"Previous execution failed:\n{output_text}\n\nOutput the corrected code block only.",
+                            messages=ENGINEER_DEBUG_PROMPT.format(output_text=output_text),
                             context_variables=context_variables
                         )
                     else:
@@ -426,7 +479,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             return step_dispatcher(output, context_variables)
 
         def check_engineer_completion(output, context_variables: ContextVariables) -> FunctionTargetResult:
-            """Check if Engineer has marked the step as complete"""
+            """Handle explicit step completion marked by the Engineer."""
             current_idx = context_variables.get("current_step_index", 0)
             exec_order = context_variables.get("execution_order", [])
             step_results = context_variables.get("step_results", {})
@@ -434,71 +487,76 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
             output_text = str(output)
 
-            # Check for STEP_COMPLETE marker
-            if "==STEP_COMPLETE==" in output_text:
-                log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} marked as complete by Engineer")
-                # Extract completion summary
-                import re
-                match = re.search(r'==========STEP_COMPLETE==========\s*\n*(.+?)(?:\n==|$)', output_text, re.DOTALL)
-                summary = match.group(1).strip() if match else "Step completed"
+            # Check for STEP_COMPLETE marker only (code is handled elsewhere).
+            if "==STEP_COMPLETE==" not in output_text:
+                return FunctionTargetResult(
+                    target=AgentTarget(engineer),
+                    messages=(
+                        "No STEP_COMPLETE marker found. Check the result files."
+                        "If you confirm the result already exists and is correct, respond with either:\n\n"
+                        "1) A Python code block to continue working, or\n"
+                        "2) The completion format:\n"
+                        "==========STEP_COMPLETE==========\n[brief summary]"
+                    ),
+                    context_variables=context_variables,
+                )
 
-                step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir / f"step_{step_id}"))
-                files_before = context_variables.get(f"files_before_step_{step_id}", set())
-                files_after = _get_file_snapshot(step_dir)
-                
-                new_files = files_after - files_before
-                detected_files = [str(f.relative_to(workspace_dir)) for f in new_files if f.is_file()]
+            log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} marked as complete by Engineer")
 
-                try:
-                    summary_path = step_dir / f"step_{step_id}_summary.md"
-                    summary_path.write_text(summary, encoding="utf-8")
-                except Exception:
-                    pass
-                
-                if detected_files:
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[✓] Step {step_id} completed: {summary}")
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[✓] Step {step_id} generated {len(detected_files)} files: {detected_files}")
-                else:
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[✓] Step {step_id} completed: {summary}")
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[!] Step {step_id} completed but no result files were detected")
+            # Extract completion summary
+            import re
 
-                step_results[step_id] = {
-                    "step_id": step_id,
-                    "status": "success",
-                    "output": summary,
-                    "files": detected_files
-                }
-                context_variables["step_results"] = step_results
-                context_variables["current_step_index"] = current_idx + 1
+            match = re.search(r'==========STEP_COMPLETE==========\s*\n*(.+?)(?:\n==|$)', output_text, re.DOTALL)
+            summary = match.group(1).strip() if match else "Step completed"
 
-                # Move to next step
-                return step_dispatcher(output, context_variables)
+            step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir))
+            files_before = context_variables.get(f"files_before_step_{step_id}", set())
+            files_after = _get_file_snapshot(step_dir)
+
+            new_files = files_after - files_before
+            detected_files = [str(f.relative_to(workspace_dir)) for f in new_files if f.is_file()]
+
+            try:
+                summary_path = step_dir / f"step_{step_id}_summary.md"
+                summary_path.write_text(summary, encoding="utf-8")
+            except Exception:
+                # Completion should not fail because of summary persistence issues.
+                pass
+
+            if detected_files:
+                log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} completed: {summary}, generated {len(detected_files)} files: {detected_files}")
             else:
-                # Engineer wants to continue working - check if there's code to execute
-                # If Engineer wrote code, execute directly (bypassing message parsing)
-                # Otherwise, prompt Engineer to continue
-                if "```python" in output_text or "```" in output_text:
-                    # Extract complete code block to avoid nested code block issues
-                    complete_code_block = extract_complete_code_block(output_text)
+                log_stage(workspace_dir, "experiment_execution", f"[!] Step {step_id} completed: {summary}, but no result files were detected")
 
-                    step_executor = context_variables.get("step_code_executor")
-                    if step_executor is None:
-                        step_executor = bootstrap_executor # fallback
+            step_results[step_id] = {
+                "step_id": step_id,
+                "status": "success",
+                "output": summary,
+                "files": detected_files,
+            }
+            context_variables["step_results"] = step_results
+            context_variables["current_step_index"] = current_idx + 1
 
-                    execution_output = execute_code_directly(complete_code_block, step_executor)
+            # Move to next step in the execution graph.
+            return step_dispatcher(output, context_variables)
 
-                    return process_step_result(execution_output, context_variables)
-                else:
-                    # No code, ask Engineer to continue
-                    return FunctionTargetResult(
-                        target=AgentTarget(engineer),
-                        messages="Continue working on the step because no obvious code blocks were detected, or mark it complete with ==========STEP_COMPLETE==========",
-                        context_variables=context_variables
-                    )
+        def handle_engineer_response(output, context_variables: ContextVariables) -> FunctionTargetResult:
+            """Route Engineer responses: prefer executing code blocks, otherwise check completion."""
+            output_text = str(output).strip()
+
+            # If the Engineer provided a code block, execute it first.
+            if "```python" in output_text or "```" in output_text:
+                complete_code_block = extract_complete_code_block(output_text)
+
+                step_executor = context_variables.get("step_code_executor")
+                if step_executor is None:
+                    step_executor = bootstrap_executor  # Fallback
+
+                execution_output = execute_code_directly(complete_code_block, step_executor)
+                return process_step_result(execution_output, context_variables)
+
+            # No code block – treat this as a completion attempt.
+            return check_engineer_completion(output, context_variables)
 
         initial_context = ContextVariables(data={
             "current_step_index": 0,
@@ -513,7 +571,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         # Register handoffs for multi-round workflow
         # RA: simple flow - execute and complete
         ra.handoffs.set_after_work(FunctionTarget(process_step_result))
-        engineer.handoffs.set_after_work(FunctionTarget(check_engineer_completion))
+        engineer.handoffs.set_after_work(FunctionTarget(handle_engineer_response))
         analyst.handoffs.set_after_work(TerminateTarget())
 
         pattern = DefaultPattern(
@@ -537,20 +595,18 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             max_rounds=len(execution_order) * (max_retries + 2) + 5
         )
 
-        # Extract analysis
-        analysis = None
-        for msg in reversed(result.chat_history):
-            if msg.get("name") == analyst.name and msg.get("content"):
-                content = msg["content"]
-                if len(content) > 100:
-                    analysis = content
-                    break
+        # Extract analysis from analyst messages (no minimum length requirement).
+        analyst_messages = [
+            msg.get("content")
+            for msg in result.chat_history
+            if msg.get("name") == analyst.name and msg.get("content")
+        ]
+
+        analysis = analyst_messages[-1] if analyst_messages else None
 
         if not analysis:
-            error_msg = f"[✕] No valid analyst analysis found! Found {len(analyst_messages)} analyst messages, but none meet length requirement (>100 chars)."
+            error_msg = "[✕] No analysis message found from analyst agent."
             log_stage(workspace_dir, "experiment_execution", error_msg)
-            for i, msg in enumerate(analyst_messages):
-                log_stage(workspace_dir, "experiment_execution", f"[ERROR] Analyst message {i+1} (length: {len(msg)}): {msg[:200]}...")
             raise WorkflowError("[✕]Analyst analysis is required but not found. Check agent execution flow.")
 
         all_result_files = []
@@ -583,8 +639,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             summary=analysis,
             data_paths=[str(p.relative_to(workspace_dir)) for p in data_files],
             figure_paths=[str(p.relative_to(workspace_dir)) for p in figure_files],
-            metrics=context.get("metrics", {}),
-            analysis=analysis
+            metrics=context.get("metrics", {})
         )
 
         results_path = get_artifact_path(workspace_dir, "results")
