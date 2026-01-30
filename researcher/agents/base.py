@@ -55,7 +55,6 @@ class BaseAgent:
             name=self.name,
             system_message=self.system_prompt,
             llm_config=llm_config,
-            human_input_mode="ALWAYS",
         )
 
         global_config = None
