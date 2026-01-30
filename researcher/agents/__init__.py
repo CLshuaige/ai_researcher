@@ -14,6 +14,8 @@ from researcher.agents.base import (
     EngineerAgent,
     AnalystAgent,
     PaperWriterAgent,
+    OutlinerAgent,
+    SectionWriterAgent,
     ReviewerAgent,
 )
 from researcher.agents.context_manager import AgentContextManager

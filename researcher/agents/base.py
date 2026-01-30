@@ -16,6 +16,8 @@ from researcher.prompts.templates import (
     ENGINEER_SYSTEM_PROMPT,
     ANALYST_SYSTEM_PROMPT,
     PAPER_WRITER_SYSTEM_PROMPT,
+    OUTLINER_SYSTEM_PROMPT,
+    SECTION_WRITER_SYSTEM_PROMPT,
     REVIEWER_SYSTEM_PROMPT,
 )
 
@@ -157,6 +159,14 @@ class AnalystAgent(BaseAgent):
 class PaperWriterAgent(BaseAgent):
     def __init__(self, name: str = "PaperWriter"):
         super().__init__(name, PAPER_WRITER_SYSTEM_PROMPT)
+
+class OutlinerAgent(BaseAgent):
+    def __init__(self, name: str = "Outliner"):
+        super().__init__(name, OUTLINER_SYSTEM_PROMPT)
+
+class SectionWriterAgent(BaseAgent):
+    def __init__(self, name: str = "SectionWriter"):
+        super().__init__(name, SECTION_WRITER_SYSTEM_PROMPT)
 
 
 # Review Module

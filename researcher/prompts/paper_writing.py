@@ -39,12 +39,14 @@ Follow ICML2026 paper structure conventions:
     {{
       "id": 1,
       "title": "Introduction",
-      "description": "Detailed description of what to cover"
+      "description": "Detailed description of what to cover",
+      "guidelines": "Advanced guidelines for the section"
     }},
     {{
       "id": 2,
       "title": "Related Work",
-      "description": "Detailed description of what to cover"
+      "description": "Detailed description of what to cover",
+      "guidelines": "Advanced guidelines for the section"
     }}
   ]
 }}
@@ -94,8 +96,28 @@ Respond with valid JSON only, no additional text."""
 # ============================================================================
 
 def abstract_prompt(title: str, abstract: str, idea: str, 
-                   method_summary: str, results_summary: str) -> str:
+                   method_summary: str, results_summary: str, output_type: str = "latex") -> str:
     """Generate prompt for improving abstract through self-reflection"""
+    if output_type == "latex":
+        #format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            "\\begin{Abstract}\n"
+            "<ABSTRACT>\n"
+            "\\end{Abstract}"
+        )
+        content_instruction = (
+            "In <ABSTRACT>, place the improved abstract in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        #format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            "## Abstract\n\n"
+            "<ABSTRACT>"
+        )
+        content_instruction = (
+            "In <ABSTRACT>, place the abstract in Markdown format. "
+        )
     return f"""Rewrite the abstract below to make it more clear and well-motivated. You are given the idea, methods, and results of the paper together with the previously written abstract.
 
 Paper Title:
@@ -123,11 +145,9 @@ Guidelines:
 - Do not add \\begin{{abstract}} or \\end{{abstract}} wrappers
 
 **Output Format**:
-\\begin{{Abstract}}
-<ABSTRACT>
-\\end{{Abstract}}
+{output_block}
 
-In <ABSTRACT>, place the improved abstract in LaTeX format."""
+{content_instruction}"""
 
 
 # ============================================================================
@@ -163,9 +183,29 @@ Respond with valid JSON only, no additional text."""
 # 5. Section Writing
 # ============================================================================
 
-def introduction_prompt(title: str, abstract: str, idea: str, method_summary: str) -> str:
+def introduction_prompt(title: str, abstract: str, idea: str, method_summary: str, output_type: str = "latex") -> str:
     """Generate introduction section"""
-    return f"""Write an introduction section for a research paper in LaTeX format following ICML2026 standards.
+    if output_type == "latex":
+        format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            "\\begin{Introduction}\n"
+            "<INTRODUCTION_TEXT>\n"
+            "\\end{Introduction}"
+        )
+        content_instruction = (
+            "In <INTRODUCTION_TEXT>, place the introduction content in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            "## Introduction\n\n"
+            "<INTRODUCTION_TEXT>"
+        )
+        content_instruction = (
+            "In <INTRODUCTION_TEXT>, place the introduction content in Markdown format. "
+        )
+    return f"""Write an introduction section for a research paper in {format_desc}.
 
 Paper Title:
 {title}
@@ -188,16 +228,34 @@ Guidelines:
 - Do NOT add citations (citations will be added later)
 
 **Output Format**:
-\\begin{{Introduction}}
-<INTRODUCTION_TEXT>
-\\end{{Introduction}}
+{output_block}
 
-In <INTRODUCTION_TEXT>, place the introduction content in LaTeX format."""
+{content_instruction}"""
 
 
-def methods_prompt(title: str, abstract: str, introduction: str, method_summary: str) -> str:
+def methods_prompt(title: str, abstract: str, introduction: str, method_summary: str, output_type: str = "latex") -> str:
     """Generate methods section"""
-    return f"""Write the methods section for a research paper in LaTeX format following ICML2026 standards.
+    if output_type == "latex":
+        format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            "\\begin{Methods}\n"
+            "<METHODS_TEXT>\n"
+            "\\end{Methods}"
+        )
+        content_instruction = (
+            "In <METHODS_TEXT>, place the methods content in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            "## Methods\n\n"
+            "<METHODS_TEXT>"
+        )
+        content_instruction = (
+            "In <METHODS_TEXT>, place the methods content in Markdown. "
+        )
+    return f"""Write the methods section for a research paper in {format_desc}.
 
 Paper Title:
 {title}
@@ -218,17 +276,35 @@ Guidelines:
 - You can create subsections and subsubsections, but NOT sections (this is already a section)
 
 **Output Format**:
-\\begin{{Methods}}
-<METHODS_TEXT>
-\\end{{Methods}}
+{output_block}
 
-In <METHODS_TEXT>, place the methods section content in LaTeX format."""
+{content_instruction}"""
 
 
 def results_prompt(title: str, abstract: str, introduction: str, methods: str, 
-                  results_summary: str) -> str:
+                  results_summary: str, output_type: str = "latex") -> str:
     """Generate results section"""
-    return f"""Write the results section for a research paper in LaTeX format following ICML2026 standards.
+    if output_type == "latex":
+        format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            "\\begin{Results}\n"
+            "<RESULTS_TEXT>\n"
+            "\\end{Results}"
+        )
+        content_instruction = (
+            "In <RESULTS_TEXT>, place the results content in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            "## Results\n\n"
+            "<RESULTS_TEXT>"
+        )
+        content_instruction = (
+            "In <RESULTS_TEXT>, place the results content in Markdown. "
+        )
+    return f"""Write the results section for a research paper in {format_desc}.
 
 Paper Title:
 {title}
@@ -256,17 +332,35 @@ Guidelines:
 - You can summarize results at the end, but do NOT write a conclusions subsection
 
 **Output Format**:
-\\begin{{Results}}
-<RESULTS_TEXT>
-\\end{{Results}}
+{output_block}
 
-In <RESULTS_TEXT>, place the results section content in LaTeX format."""
+{content_instruction}"""
 
 
 def conclusions_prompt(title: str, abstract: str, introduction: str, methods: str, 
-                      results: str) -> str:
+                      results: str, output_type: str = "latex") -> str:
     """Generate conclusions section"""
-    return f"""Write the conclusions section for a research paper in LaTeX format following ICML2026 standards.
+    if output_type == "latex":
+        format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            "\\begin{Conclutions}\n"
+            "<CONCLUTIONS_TEXT>\n"
+            "\\end{Conclutions}"
+        )
+        content_instruction = (
+            "In <CONCLUTIONS_TEXT>, place the conclutions content in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            "## Conclutions\n\n"
+            "<CONCLUTIONS_TEXT>"
+        )
+        content_instruction = (
+            "In <CONCLUTIONS_TEXT>, place the conclutions content in Markdown. "
+        )
+    return f"""Write the conclusions section for a research paper in {format_desc}.
 
 Paper Title:
 {title}
@@ -292,18 +386,37 @@ Guidelines:
 - Do NOT write words or sentences between asterisks (*)
 
 **Output Format**:
-\\begin{{Conclusions}}
-<CONCLUSIONS_TEXT>
-\\end{{Conclusions}}
+{output_block}
 
-In <CONCLUSIONS_TEXT>, place the conclusions section content in LaTeX format."""
+{content_instruction}"""
 
 
-def section_prompt(section_id: int, section_title: str, section_description: str,
+def section_prompt(section_id: int, section_title: str, section_description: str, section_guidelines: str,
                   title: str, abstract: str, completed_sections: str,
-                  task: str, idea: str, method_summary: str, results_summary: str) -> str:
+                  task: str, idea: str, method_summary: str, results_summary: str, output_type: str = "latex") -> str:
     """Generate prompt for writing a specific section (generic fallback)"""
-    return f"""Write the "{section_title}" section for a research paper in LaTeX format following ICML2026 standards.
+    if output_type == "latex":
+        format_desc = "LaTeX format following ICML2026 standards"
+        output_block = (
+            f"\\begin{{{section_title}}}\n"
+            "<SECTION_TEXT>\n"
+            f"\\end{{{section_title}}}"
+        )
+        content_instruction = (
+            f"In <SECTION_TEXT>, place the section content in valid LaTeX format. "
+        )
+
+    elif output_type == "markdown":  # markdown
+        format_desc = "Markdown format suitable for academic papers"
+        output_block = (
+            f"## {{{section_title}}}\n\n"
+            "<SECTION_TEXT>"
+        )
+        content_instruction = (
+            "In <SECTION_TEXT>, place the section content in Markdown. "
+        )
+    return f"""Write the "{section_title}" section for a research paper in {format_desc}.
+You are provided with these information and previous sections:
 
 Section ID: {section_id}
 Section Title: {section_title}
@@ -315,9 +428,6 @@ Paper Title:
 
 Paper Abstract:
 {abstract}
-
-Previous Sections (for context):
-{completed_sections}
 
 Research Task:
 {task}
@@ -331,19 +441,16 @@ Method Summary:
 Results Summary:
 {results_summary}
 
+Previous Sections (for context):
+{completed_sections}
+
 Guidelines:
-- Follow the section description carefully
-- Connect with previous sections for coherence
-- Do NOT create subsections unless the section description explicitly requires them
-- Do NOT add citations yet (use placeholders if needed)
-- Ensure technical accuracy and academic writing style
+{section_guidelines}
 
 **Output Format**:
-\\begin{{{section_title}}}
-<SECTION_TEXT>
-\\end{{{section_title}}}
+{output_block}
 
-In <SECTION_TEXT>, place the section content in LaTeX format."""
+{content_instruction}"""
 
 
 # ============================================================================

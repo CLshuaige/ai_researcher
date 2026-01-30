@@ -11,6 +11,7 @@ from autogen.agentchat.contrib.capabilities.transforms import (
     TextMessageCompressor,
     MessageTokenLimiter,
 )
+from autogen.agentchat.contrib.capabilities import transforms_util
 
 # Conservative estimates for common models
 MODEL_CONTEXT_LENGTHS: Dict[str, int] = {
@@ -18,6 +19,64 @@ MODEL_CONTEXT_LENGTHS: Dict[str, int] = {
     "claude": 200000,
     "qwen": 32768,
 }
+
+class EITextMessageCompressor(TextMessageCompressor):
+    """
+    TextMessageCompressor for Except the Instructions in the last message."""
+
+    def apply_transform(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Applies compression to messages in a conversation history based on the specified configuration.
+
+        The function processes each message according to the `compression_args` and `min_tokens` settings, applying
+        the specified compression configuration and returning a new list of messages with reduced token counts
+        where possible.
+
+        Args:
+            messages (List[Dict]): A list of message dictionaries to be compressed.
+
+        Returns:
+            List[Dict]: A list of dictionaries with the message content compressed according to the configured
+                method and scope.
+        """
+        # Make sure there is at least one message
+        if not messages:
+            return messages
+
+        # if the total number of tokens in the messages is less than the min_tokens, return the messages as is
+        if not transforms_util.min_tokens_reached(messages, self._min_tokens):
+            return messages
+
+        total_savings = 0
+        processed_messages = messages.copy()
+
+        for message in processed_messages[:-1]: # Iterate over all but the last message
+            # Some messages may not have content.
+            if not transforms_util.is_content_right_type(message.get("content")):
+                continue
+
+            if not transforms_util.should_transform_message(message, self._filter_dict, self._exclude_filter):
+                continue
+
+            if transforms_util.is_content_text_empty(message["content"]):
+                continue
+
+            cache_key = transforms_util.cache_key(message["content"], self._min_tokens)
+            cached_content = transforms_util.cache_content_get(self._cache, cache_key)
+            if cached_content is not None:
+                message["content"], savings = cached_content
+            else:
+                message["content"], savings = self._compress(message["content"])
+
+            transforms_util.cache_content_set(self._cache, cache_key, message["content"], savings)
+
+            assert isinstance(savings, int)
+            total_savings += savings
+
+        self._recent_tokens_savings = total_savings
+        #print(f"+++++++++++++++++++++++++++++++++\n{processed_messages}\n+++++++++++++++++++++++++++++++++")
+        return processed_messages
+
+
 
 
 class AgentContextManager:
@@ -151,7 +210,7 @@ class AgentContextManager:
             # Calculate compression threshold
             compression_min_tokens = int(max_tokens * self.compression_threshold)
             
-            compressor = TextMessageCompressor(                         # Apply TextMessageCompressor
+            compressor = EITextMessageCompressor(                         # Apply TextMessageCompressor
                 min_tokens=compression_min_tokens,
                 compression_params=self.compression_params,
             )

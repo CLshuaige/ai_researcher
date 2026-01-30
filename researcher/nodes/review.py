@@ -2,7 +2,7 @@ from typing import Dict, Any
 
 from autogen.agentchat import initiate_group_chat
 from autogen.agentchat.group.patterns import DefaultPattern
-from autogen.agentchat.group import RevertToUserTarget
+from autogen.agentchat.group import RevertToUserTarget, ContextVariables
 
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
@@ -43,6 +43,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         pattern = DefaultPattern(
             initial_agent=reviewer,
             agents=[reviewer],
+            context_variables=ContextVariables(),
             group_manager_args={"llm_config": llm_config}
         )
 
@@ -53,7 +54,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         result, context, last_agent = initiate_group_chat(
             pattern=pattern,
             messages=prompt,
-            max_rounds=1
+            max_rounds=2
         )
 
         # Extract review from reviewer
@@ -73,12 +74,15 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
             agent_chat_messages=reviewer.chat_messages
         )
 
-        referee = _parse_review(review_text)
+        # skip parse
+        #referee = _parse_review(review_text)
+        referee = review_text
 
         referee_path = get_artifact_path(workspace_dir, "referee")
-        save_markdown(referee.to_markdown(), referee_path)
+        #save_markdown(referee.to_markdown(), referee_path)
+        save_markdown(referee, referee_path)
 
-        log_stage(workspace_dir, "review", f"Completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
+        #log_stage(workspace_dir, "review", f"Completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
 
         return {
             "task": load_artifact_from_file(workspace_dir, "task"),
