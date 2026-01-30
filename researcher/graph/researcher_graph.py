@@ -36,13 +36,13 @@ def build_researcher_graph() -> StateGraph:
     # Define edges
     workflow.add_edge(START                 , "initialization")
     workflow.add_conditional_edges("initialization", router_node)
-    workflow.add_edge("task_parsing"        , "literature_review")
-    workflow.add_edge("literature_review"   , "hypothesis_construction")
-    workflow.add_edge("hypothesis_construction", "method_design")
-    workflow.add_edge("method_design"       , "experiment_execution")
-    workflow.add_edge("experiment_execution", "report_generation")
-    workflow.add_edge("report_generation"   , "review")
-    workflow.add_edge("review"              , END)
+    workflow.add_conditional_edges("task_parsing"        , router_node)
+    workflow.add_conditional_edges("literature_review"   , router_node)
+    workflow.add_conditional_edges("hypothesis_construction", router_node)
+    workflow.add_conditional_edges("method_design"       , router_node)
+    workflow.add_conditional_edges("experiment_execution", router_node)
+    workflow.add_conditional_edges("report_generation"   , router_node)
+    workflow.add_conditional_edges("review"              , router_node)
 
     # Compile with checkpointer
     checkpointer = MemorySaver()

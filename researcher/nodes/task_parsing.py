@@ -146,7 +146,12 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
 
         log_stage(workspace_dir, "task_parsing", "Completed")
-        return {"task": task, "stage": "task_parsing"}
+
+        update_state = {"task": task, "stage": "task_parsing"}
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "literature_review"
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "task_parsing", f"Error: {str(e)}")

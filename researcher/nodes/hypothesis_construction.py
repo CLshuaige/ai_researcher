@@ -155,7 +155,14 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
 
         log_stage(workspace_dir, "hypothesis_construction", f"Completed. Generated {len(idea.candidates)} ideas")
 
-        return {"task": task, "idea": idea, "stage": "hypothesis_construction"}
+        update_state = {
+            "idea": idea,
+            "stage": "hypothesis_construction"
+        }
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "method_design"
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "hypothesis_construction", f"Error: {str(e)}")

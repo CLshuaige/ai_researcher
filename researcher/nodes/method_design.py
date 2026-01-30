@@ -157,7 +157,14 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
 
         log_stage(workspace_dir, "method_design", "Completed")
 
-        return {"task": task, "method": method, "stage": "method_design"}
+        update_state = {
+            "method": method,
+            "stage": "method_design",
+        }
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "experiment_execution"
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "method_design", f"Error: {str(e)}")
