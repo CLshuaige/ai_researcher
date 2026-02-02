@@ -9,10 +9,10 @@ VLLM_PATTERN="vllm serve"
 PYTHON_CLIENT_PATTERN="python -m main"
 WAIT_SECONDS=8
 
-MODEL_PATH="/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-30B-A3B-Instruct-2507"
+MODEL_PATH="/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct"
 TP=8
 GPU_UTIL=0.8
-MAX_LEN=32768
+# MAX_LEN=32768
 DTYPE="bfloat16"
 
 ############################
@@ -75,12 +75,11 @@ log "Starting vLLM serve..."
 
 exec vllm serve \
   "$MODEL_PATH" \
+  --port "$PORT" \
+  --host 0.0.0.0 \
   --tensor-parallel-size "$TP" \
   --gpu-memory-utilization "$GPU_UTIL" \
-  --max-model-len "$MAX_LEN" \
   --dtype "$DTYPE" \
   --trust-remote-code \
-  --host 0.0.0.0 \
-  --port "$PORT" \
   --enable-auto-tool-choice \
   --tool-call-parser pythonic

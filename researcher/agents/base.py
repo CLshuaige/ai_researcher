@@ -14,6 +14,7 @@ from researcher.prompts.templates import (
     METHOD_FORMATTER_SYSTEM_PROMPT,
     RA_SYSTEM_PROMPT,
     ENGINEER_SYSTEM_PROMPT,
+    CODE_DEBUGGER_SYSTEM_PROMPT,
     ANALYST_SYSTEM_PROMPT,
     PAPER_WRITER_SYSTEM_PROMPT,
     OUTLINER_SYSTEM_PROMPT,
@@ -148,6 +149,11 @@ class RAAgent(BaseAgent):
 class EngineerAgent(BaseAgent):
     def __init__(self, name: str = "Engineer"):
         super().__init__(name, ENGINEER_SYSTEM_PROMPT)
+
+
+class CodeDebuggerAgent(BaseAgent):
+    def __init__(self, name: str = "CodeDebugger"):
+        super().__init__(name, CODE_DEBUGGER_SYSTEM_PROMPT)
 
 
 class AnalystAgent(BaseAgent):

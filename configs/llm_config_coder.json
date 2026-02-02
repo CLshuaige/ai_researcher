@@ -1,0 +1,11 @@
+{
+    "config_list": [
+        {
+            "api_type": "openai",
+            "model": "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct",
+            "base_url": "http://localhost:8001/v1",
+            "api_key": "EMPTY"
+        }
+    ],
+    "temperature": 0.3
+}

@@ -18,13 +18,14 @@ from autogen.agentchat.contrib.capabilities.transforms import MessageHistoryLimi
 
 from researcher.state import ResearchState
 from researcher.schemas import ExperimentResult, MethodStep, ResearchIdea
-from researcher.agents import RAAgent, EngineerAgent, AnalystAgent
+from researcher.agents import RAAgent, EngineerAgent, CodeDebuggerAgent, AnalystAgent
 from researcher.utils import (
     save_markdown,
     log_stage,
     get_artifact_path,
     load_artifact_from_file,
     get_llm_config,
+    get_default_config_path,
     save_agent_history,
     deduplicate_long_repeats,
 )
@@ -32,7 +33,7 @@ from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
     ENGINEER_STEP_PROMPT,
     RA_STEP_PROMPT,
-    ENGINEER_DEBUG_PROMPT,
+    CODE_DEBUG_PROMPT,
 )
 from researcher.exceptions import WorkflowError
 
@@ -64,6 +65,10 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             for config in engineer_llm_config["config_list"]:
                 config["temperature"] = 0.3
 
+        coder_llm_config = get_llm_config(
+            config_path=get_default_config_path("llm_config_coder.json")
+        )
+
         # Create experiment directory with timestamp
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -91,6 +96,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
         ra = RAAgent().create_agent(llm_config)
         engineer = EngineerAgent().create_agent(engineer_llm_config, enable_context_compression=False)
+        code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
 
         # Limit Engineer's message history to preserve system prompt and recent exchanges,
@@ -112,6 +118,13 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 engineer_token_limiter
             ]
         ).add_to_agent(engineer)
+
+        transform_messages.TransformMessages(
+            transforms=[
+                engineer_history_limiter,
+                engineer_token_limiter
+            ]
+        ).add_to_agent(code_debugger)
         
         # Deduplicate long repeats in Engineer's messages such as path results
         engineer.register_hook("process_message_before_send", deduplicate_long_repeats)
@@ -452,11 +465,11 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     log_stage(workspace_dir, "experiment_execution",
                              f"[↻] Step {step_id} failed - retry {retry_count + 1}/{max_retries}: {error_details}")
 
-                    # Return to Engineer/RA with error info for retry
+                    # On Engineer-assigned steps, hand off failures to the dedicated Code Debugger.
                     if step.assignee == "Engineer":
                         return FunctionTargetResult(
-                            target=AgentTarget(engineer),
-                            messages=ENGINEER_DEBUG_PROMPT.format(output_text=output_text),
+                            target=AgentTarget(code_debugger),
+                            messages=CODE_DEBUG_PROMPT.format(step_id=step_id, output_text=output_text),
                             context_variables=context_variables
                         )
                     else:
@@ -540,11 +553,16 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             # Move to next step in the execution graph.
             return step_dispatcher(output, context_variables)
 
-        def handle_engineer_response(output, context_variables: ContextVariables) -> FunctionTargetResult:
-            """Route Engineer responses: prefer executing code blocks, otherwise check completion."""
+        def _handle_code_response(
+            output,
+            context_variables: ContextVariables,
+            *,
+            allow_step_completion: bool,
+        ) -> FunctionTargetResult:
+            """Shared logic for Engineer / CodeDebugger responses that may contain code blocks."""
             output_text = str(output).strip()
 
-            # If the Engineer provided a code block, execute it first.
+            # If a code block is present, execute it and route by exit code.
             if "```python" in output_text or "```" in output_text:
                 complete_code_block = extract_complete_code_block(output_text)
 
@@ -555,8 +573,18 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 execution_output = execute_code_directly(complete_code_block, step_executor)
                 return process_step_result(execution_output, context_variables)
 
-            # No code block – treat this as a completion attempt.
-            return check_engineer_completion(output, context_variables)
+            step_id = context_variables.get("current_step_id", "step_id")
+            
+            # No code block: Engineer can attempt to mark step complete; Debugger must try again.
+            if allow_step_completion:
+                return check_engineer_completion(output, context_variables)
+
+            return FunctionTargetResult(
+                target=AgentTarget(code_debugger),
+                messages=CODE_DEBUG_PROMPT.format(step_id=step_id, output_text=output_text),
+                context_variables=context_variables,
+            )
+
 
         initial_context = ContextVariables(data={
             "current_step_index": 0,
@@ -571,12 +599,19 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         # Register handoffs for multi-round workflow
         # RA: simple flow - execute and complete
         ra.handoffs.set_after_work(FunctionTarget(process_step_result))
-        engineer.handoffs.set_after_work(FunctionTarget(handle_engineer_response))
+        engineer.handoffs.set_after_work(
+            FunctionTarget(lambda output, context_variables:
+                           _handle_code_response(output, context_variables, allow_step_completion=True))
+        )
+        code_debugger.handoffs.set_after_work(
+            FunctionTarget(lambda output, context_variables:
+                           _handle_code_response(output, context_variables, allow_step_completion=False))
+        )
         analyst.handoffs.set_after_work(TerminateTarget())
 
         pattern = DefaultPattern(
             initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
-            agents=[ra, engineer, analyst],
+            agents=[ra, engineer, code_debugger, analyst],
             user_agent=engineer,
             context_variables=initial_context,
             group_manager_args={"llm_config": llm_config}
@@ -631,7 +666,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             agent_chat_messages={
                 ra.name: ra.chat_messages,
                 engineer.name: engineer.chat_messages,
-                analyst.name: analyst.chat_messages
+                code_debugger.name: code_debugger.chat_messages,
+                analyst.name: analyst.chat_messages,
             }
         )
 
