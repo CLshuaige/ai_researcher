@@ -683,10 +683,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
         log_stage(workspace_dir, "experiment_execution", f"Completed. Generated {len(data_files)} data files, {len(figure_files)} figure files")
 
-        return {
+        update_state = {
             "results": exp_result,
             "stage": "experiment_execution"
         }
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "report_generation"
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "experiment_execution", f"Error: {str(e)}")

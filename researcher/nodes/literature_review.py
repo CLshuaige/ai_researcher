@@ -146,8 +146,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
-
-
         # 1. 定义 hook 函数
         def inject_context_to_prompt(messages: list[dict]) -> list[dict]:
             """
@@ -202,10 +200,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
             return new_msgs
 
-
-
-        
-
         searcher = LiteratureSearcherAgent().create_agent(llm_config)
         summarizer = LiteratureSummarizerAgent().create_agent(llm_config)
 
@@ -213,7 +207,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         #     return True
         #summarizer.register_reply(always_trigger, context_for_summarization_reply_func, position=0)
         
-        llm_config_tool = get_llm_config(Path("configs/llm_config_tool.json"))
+        llm_config_tool = get_llm_config(use_tool=True)
         executor = ConversableAgent(
             name="SearchExecutor",
             human_input_mode="NEVER",
@@ -323,7 +317,15 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 
-        return {"task": task, "literature": literature, "stage": "literature_review"}
+        update_state = {
+            "literature": literature,
+            "stage": "literature_review",
+        }
+
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "hypothesis_construction"
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "literature_review", f"Error: {str(e)}")

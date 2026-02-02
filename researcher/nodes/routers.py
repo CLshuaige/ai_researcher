@@ -1,21 +1,21 @@
 from researcher.state import ResearchState
+from langgraph.graph import END
 
 # task router
 def router_node(state: ResearchState) -> str:
 
-    if state['task'] == None or state['task'] == "task_parsing":
-        return "task_parsing"
-    elif state['task'] == "literature_review":
-        return "literature_review"
-    elif state['task'] == "hypothesis_construction":
-        return "hypothesis_construction"
-    elif state['task'] == "method_design":
-        return "method_design"
-    elif state['task'] == "experiment_execution":
-        return "experiment_execution"
-    elif state['task'] == "report_generation":
-        return "report_generation"
-    elif state['task'] == "review":
-        return "review"
+    if state["stage"] == "initialization":
+        start_node = state["start_node"]
+        if start_node == None or start_node == "task_parsing":
+            return "task_parsing"
+        elif start_node in ["literature_review", "hypothesis_construction", "method_design", "experiment_execution", "report_generation", "review"]:
+            return start_node
+        else:
+            raise Exception(f"Unknown node: {start_node}")
+        
     else:
-        raise Exception(f"Unknown task: {state['task']}")
+        next_node = state["next_node"]
+        if next_node in ["literature_review", "hypothesis_construction", "method_design", "experiment_execution", "report_generation", "review"]:
+            return next_node
+        elif next_node == "end":
+            return END

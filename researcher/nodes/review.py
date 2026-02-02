@@ -83,13 +83,16 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         save_markdown(referee, referee_path)
 
         #log_stage(workspace_dir, "review", f"Completed. Score: {referee.score}/10, Recommendation: {referee.recommendation}")
-
-        return {
-            "task": load_artifact_from_file(workspace_dir, "task"),
-            "paper": paper,
+        update_state = {
             "referee": referee,
-            "stage": "review"
+            "stage": "review",
         }
+
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "end"
+
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "review", f"Error: {str(e)}")

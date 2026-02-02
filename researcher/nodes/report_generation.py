@@ -558,14 +558,15 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
                          "Warning: include_references enabled but API key not provided.")
                 
 
-
-
-        return {
-            "task": task,
-            #"paper_title": paper_meta.get("title", ""),
+        update_state = {
             "paper_dir": str(paper_dir),
             "stage": "report_generation"
         }
+        # router
+        if state["config"]["researcher"]["workflow"] == "default":
+            update_state["next_node"] = "review"
+
+        return update_state
 
     except Exception as e:
         log_stage(workspace_dir, "report_generation", f"Error: {str(e)}")

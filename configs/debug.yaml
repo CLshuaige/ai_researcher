@@ -19,8 +19,11 @@ model:
 workspace:
   base_dir: "/home/ai_researcher/projects/ai_researcher/workspace"
 
+
 # Researcher Settings
 researcher:
+  workflow: "default"
+  
   task_parsing:
     mode: "basic"
     human_in_the_loop: true

@@ -114,7 +114,7 @@ def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional
     return load_markdown(artifact_path)
 
 
-def get_llm_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+def get_llm_config(config_path: Optional[Path] = None, use_tool: bool = False, sampling_params: dict = None) -> Dict[str, Any]:
     """Get standard LLM configuration for autogen
     Load LLM configuration from json file"""
     import json
@@ -127,7 +127,17 @@ def get_llm_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
             config_data = json.load(f)
             # print(f"Loaded LLM config from {config_path}")
             # print(f"LLM Config: {config_data}")
-            return config_data
+
+        if use_tool:
+            for config in config_data["config_list"]:
+                config["tool_choice"] = "required"
+
+        if sampling_params:
+            for config in config_data["config_list"]:
+                for k, v in sampling_params.items():
+                    config[k] = v
+
+        return config_data
     else:
         raise WorkflowError(f"LLM config file not found: {config_path}")
 
