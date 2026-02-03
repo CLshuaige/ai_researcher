@@ -103,7 +103,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         # avoiding destructive summarization of code that could make it non-executable
         engineer_history_limiter = MessageHistoryLimiter(
             max_messages = 6,
-            keep_first_message = True,
+            keep_first_message = False,
         )
         engineer_token_limiter = MessageTokenLimiter(
             max_tokens=25000,
