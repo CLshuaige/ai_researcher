@@ -1,29 +1,5 @@
 """
 OpenCode Executor Module
-
-This module provides pure OpenCode interaction services for the research workflow.
-It focuses solely on OpenCode's input (instructions), behavior (execution & auto-debugging),
-and output (results), without any Engineer logic.
-
-USAGE EXAMPLE (for experiment_execution.py):
-    ```python
-    from researcher.utils import OpenCodeExecutor
-
-    # Initialize executor
-    executor = OpenCodeExecutor()
-
-    # Execute instruction (instruction comes from Engineer in experiment_execution.py)
-    result = await executor.execute_instruction(instruction, workspace_dir)
-
-    # Result contains:
-    # - success: bool (whether OpenCode execution succeeded)
-    # - output: str (OpenCode's response/output)
-    # - files: List[str] (files created/modified)
-    # - exit_code: int (final exit code)
-    ```
-
-Key Services:
-- execute_instruction(): Send instruction to OpenCode and get execution result
 """
 
 from pathlib import Path
@@ -51,7 +27,9 @@ class OpenCodeExecutor:
         self,
         opencode_base_url: str = "http://localhost:4096",
         timeout: float = 300.0,
-        config_file: Optional[Path] = None
+        config_file: Optional[Path] = None,
+        provider_id: Optional[str] = None,
+        model_id: Optional[str] = None,
     ):
 
         if not OPENCODE_AVAILABLE:
@@ -60,29 +38,19 @@ class OpenCodeExecutor:
         self.opencode_base_url = opencode_base_url
         self.timeout = timeout
         self.config_file = config_file
+        self.provider_id = provider_id
+        self.model_id = model_id
 
     async def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
-        """
-        Execute an instruction using OpenCode with automatic debugging.
-
-        Args:
-            instruction: Instruction string for OpenCode to execute
-            workspace_dir: Working directory for the OpenCode session
-
-        Returns:
-            Dict containing OpenCode execution result:
-                - success: bool - Whether execution succeeded
-                - output: str - OpenCode's response/output
-                - files: List[str] - Files created/modified during execution
-                - exit_code: int - Final exit code (if applicable)
-        """
         # Prepend debugging guidance to instruction
         full_instruction = OPENCODE_DEBUGGING_NOTE + "\n\n" + instruction
 
         async with OpenCodeClient(
             base_url=self.opencode_base_url,
             timeout=self.timeout,
-            config_file=self.config_file
+            config_file=self.config_file,
+            provider_id=self.provider_id,
+            model_id=self.model_id,
         ) as opencode:
             await opencode.create_session(workspace_dir)
 
@@ -104,12 +72,14 @@ class OpenCodeExecutor:
 async def test_executor():
     executor = OpenCodeExecutor()
 
-    result = await executor.execute_instruction("Write a simple Python script that prints 'Hello, OpenCode!'", Path("/home/ai_researcher/projects/workplace_linp/ai_researcher/tests/test_opencode"))
-    print("Executor result:", result)
+    result = await executor.execute_instruction(
+        "Write a simple Python script that prints 'Hello, OpenCode!'", 
+        Path(".")
+    )
+
     return result
 
 if __name__ == "__main__":
     import asyncio
-    import pprint
-    result = asyncio.run(test_executor())
-    pprint.pprint(result, width=120, compact=False)
+    
+    print(asyncio.run(test_executor()))

@@ -83,4 +83,4 @@ exec conda run -n vllm-py-3.10 vllm serve \
   --dtype "$DTYPE" \
   --trust-remote-code \
   --enable-auto-tool-choice \
-  --tool-call-parser pythonic
+  --tool-call-parser qwen3_coder
