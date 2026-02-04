@@ -73,7 +73,8 @@ log "Port $PORT is clean."
 ############################
 log "Starting vLLM serve..."
 
-exec vllm serve \
+# 激活 vLLM 环境并启动服务
+exec conda run -n vllm-py-3.10 vllm serve \
   "$MODEL_PATH" \
   --port "$PORT" \
   --host 0.0.0.0 \

@@ -34,3 +34,7 @@ pyyaml>=6.0.0
 
 # Web interface
 gradio>=4.0.0
+
+# OpenCode integration
+opencode-ai>=1.1.0
+nest_asyncio>=1.6.0

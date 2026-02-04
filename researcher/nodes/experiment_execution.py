@@ -29,6 +29,7 @@ from researcher.utils import (
     save_agent_history,
     deduplicate_long_repeats,
 )
+from researcher.integrations import OpenCodeExecutor, get_opencode_server_url
 from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
     ENGINEER_STEP_PROMPT,
@@ -98,6 +99,12 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         engineer = EngineerAgent().create_agent(engineer_llm_config, enable_context_compression=False)
         code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
+                
+        opencode_base_url = get_opencode_server_url()
+        opencode_executor = OpenCodeExecutor(
+            opencode_base_url=opencode_base_url,
+            timeout=timeout
+        )
 
         # Limit Engineer's message history to preserve system prompt and recent exchanges,
         # avoiding destructive summarization of code that could make it non-executable
