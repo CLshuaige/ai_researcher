@@ -39,6 +39,7 @@ researcher:
     max_debate_iterations: 5
   experiment_execution:
     mode: "basic"
+    backend: "opencode"
     code_execution_timeout: 300  # seconds
     code_execution_retries: 5
     use_virtual_env: true
