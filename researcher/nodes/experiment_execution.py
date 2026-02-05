@@ -6,6 +6,7 @@ from autogen.agentchat import initiate_group_chat
 from autogen.coding import LocalCommandLineCodeExecutor, CodeBlock
 from autogen.code_utils import create_virtual_env
 from autogen.agentchat.group.patterns import DefaultPattern
+from autogen_agentchat.messages import TextMessage
 from autogen.agentchat.group import (
     ContextVariables,
     AgentTarget,
@@ -33,6 +34,8 @@ from researcher.integrations import OpenCodeExecutor, get_opencode_server_url
 from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
     ENGINEER_STEP_PROMPT,
+    EXPERIMENT_EXECUTION_CONTEXT_PROMPT,
+    ENGINEER_STEP_PLAN_PROMPT,
     RA_STEP_PROMPT,
     CODE_DEBUG_PROMPT,
 )
@@ -57,18 +60,19 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         max_retries = config["code_execution_retries"]
         use_virtual_env = config["use_virtual_env"]
         virtual_env_path = Path(config["virtual_env_path"])
+        backend = config["backend"]
 
         llm_config = get_llm_config()
 
-        # Create Engineer-specific LLM config with lower temperature for more deterministic code generation
-        engineer_llm_config = dict(llm_config)
-        if "config_list" in engineer_llm_config:
-            for config in engineer_llm_config["config_list"]:
-                config["temperature"] = 0.3
+        # # Create Engineer-specific LLM config with lower temperature for more deterministic code generation
+        # engineer_llm_config = dict(llm_config)
+        # if "config_list" in engineer_llm_config:
+        #     for config in engineer_llm_config["config_list"]:
+        #         config["temperature"] = 0.3
 
-        coder_llm_config = get_llm_config(
-            config_path=get_default_config_path("llm_config_coder.json")
-        )
+        # coder_llm_config = get_llm_config(
+        #     config_path=get_default_config_path("llm_config_coder.json")
+        # )
 
         # Create experiment directory with timestamp
         from datetime import datetime
@@ -95,9 +99,10 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             else:
                 raise WorkflowError(f"Virtual environment not found: {venv_path}")
 
+        # Agents
         ra = RAAgent().create_agent(llm_config)
-        engineer = EngineerAgent().create_agent(engineer_llm_config, enable_context_compression=False)
-        code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
+        engineer = EngineerAgent().create_agent(llm_config, enable_context_compression=False)
+        #code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
                 
         opencode_base_url = get_opencode_server_url()
@@ -126,96 +131,27 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             ]
         ).add_to_agent(engineer)
 
-        transform_messages.TransformMessages(
-            transforms=[
-                engineer_history_limiter,
-                engineer_token_limiter
-            ]
-        ).add_to_agent(code_debugger)
+        # transform_messages.TransformMessages(
+        #     transforms=[
+        #         engineer_history_limiter,
+        #         engineer_token_limiter
+        #     ]
+        # ).add_to_agent(code_debugger)
         
         # Deduplicate long repeats in Engineer's messages such as path results
         engineer.register_hook("process_message_before_send", deduplicate_long_repeats)
 
-        bootstrap_executor = LocalCommandLineCodeExecutor(
-            timeout=timeout,
-            work_dir=str(exp_dir),
-            virtual_env_context=virtual_env_context,
-        )
+        if backend == "autogen":
+            bootstrap_executor = LocalCommandLineCodeExecutor(
+                timeout=timeout,
+                work_dir=str(exp_dir),
+                virtual_env_context=virtual_env_context,
+            )
+        elif backend == "opencode":
+            #TODO: opencode
+            pass
 
         steps_dict = {step.step_id: step for step in steps}
-        
-        def extract_complete_code_block(message: str) -> str:
-            """Extract complete code block from first ``` to last ```"""
-            text = message.strip()
-
-            # Find first ```
-            first_fence = text.find("```")
-            if first_fence == -1:
-                return message
-
-            # Find last ```
-            last_fence = text.rfind("```")
-            if last_fence == -1 or last_fence <= first_fence:
-                return message
-
-            # Extract from first ``` to last ```
-            return text[first_fence:last_fence + 3]
-
-        def execute_code_directly(code_text: str, executor: LocalCommandLineCodeExecutor) -> str:
-            """Execute code directly by creating CodeBlock, bypassing message parsing"""
-            # Extract code content from the code block
-            if code_text.startswith("```"):
-                code_start = code_text.find("\n", code_text.find("```")) + 1
-                code_end = code_text.rfind("```")
-                code_content = code_text[code_start:code_end].strip()
-            else:
-                code_content = code_text
-
-            code_block = CodeBlock(code=code_content, language="python")
-            result = executor.execute_code_blocks([code_block])
-
-            if result.exit_code == 0:
-                output = f"exitcode: {result.exit_code} (execution succeeded)\nCode output: {result.output}"
-            else:
-                output = f"exitcode: {result.exit_code} (execution failed)\nCode output: {result.output}"
-
-            return output
-
-        def sanitize_dir_name(name: str) -> str:
-            """Convert step description to safe directory name"""
-            import re
-            name = re.sub(r'[^\w\s-]', '', name)
-            name = re.sub(r'[-\s]+', '_', name)
-            return name[:50].strip('_').lower() or 'step'
-        
-        def get_step_dir(step: MethodStep) -> Path:
-            """Get unified experiment directory for all steps"""
-            step_dir = exp_dir
-            step_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                import json
-                meta_path = step_dir / f"step_{step.step_id}_meta.json"
-                if not meta_path.exists():
-                    meta = {
-                        "step_id": step.step_id,
-                        "description": step.description,
-                        "assignee": step.assignee,
-                        "dependencies": step.dependencies,
-                        "expected_output": step.expected_output,
-                        "work_dir": str(step_dir),
-                    }
-                    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception:
-                # Best-effort only; do not fail workflow due to metadata writing.
-                pass
-            return step_dir
-        
-        def _get_file_snapshot(step_dir: Path) -> set:
-            """Get snapshot of all files in step directory before execution"""
-            if not step_dir.exists():
-                return set()
-            all_files = set(step_dir.rglob("*"))
-            return {f for f in all_files if f.is_file()}
 
         def step_dispatcher(output, context_variables: ContextVariables) -> FunctionTargetResult:
             """Dispatch next step based on execution order and dependencies"""
@@ -276,44 +212,13 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
         def _dispatch_to_agent(step: MethodStep, context_variables: ContextVariables, task: str, idea: str, step_results: dict) -> FunctionTargetResult:
             """Dispatch step to RA or Engineer based on assignee"""
-            # Collect file paths from previous steps
-            available_files = []
-            dep_summaries = []
-            for dep_id in step.dependencies:
-                if dep_id in step_results:
-                    dep_result = step_results[dep_id]
-                    # Get truncated summary
-                    dep_summary = dep_result.get('output', '')[:200]
-                    dep_summaries.append(f"Step {dep_id}: {dep_summary}")
-
-                    dep_files = dep_result.get('files', [])
-                    available_files.extend(dep_files)
-
-            context_str = "\n".join(dep_summaries) if dep_summaries else "No previous results"
-            files_str = "\n".join([f"- {f}" for f in available_files]) if available_files else "No files available from previous steps"
-
-            # Deduplicate and limit available files to prevent context length explosion
-            # if available_files:
-            #     unique_files = list(set(available_files))  # Remove duplicates
-            #     max_files_display = 15  # Limit to prevent context overflow
-
-            #     if len(unique_files) <= max_files_display:
-            #         files_str = "\n".join([f"- {f}" for f in unique_files])
-            #     else:
-            #         files_str = f"Total {len(unique_files)} files available from previous steps.\n"
-            #         files_str += "Showing first 15 files as examples:\n"
-            #         files_str += "\n".join([f"- {f}" for f in unique_files[:15]])
-            # else:
-            #     files_str = "No files available from previous steps"
-
-            selected_idea_content = extract_selected_idea(idea)
 
             # Store step info in context for completion detection
             context_variables["current_step_id"] = step.step_id
             context_variables["current_step_description"] = step.description
             context_variables["current_step_expected_output"] = step.expected_output
             
-            step_dir = get_step_dir(step)
+            step_dir = get_step_dir(step, exp_dir)
             context_variables[f"step_dir_{step.step_id}"] = str(step_dir)
             
             files_before = _get_file_snapshot(step_dir)
@@ -327,32 +232,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             context_variables["step_code_executor"] = step_code_executor
 
             if step.assignee == "RA":
-                prompt = RA_STEP_PROMPT.format(
-                    step_id=step.step_id,
-                    task=task,
-                    idea=selected_idea_content,
-                    description=step.description,
-                    expected_output=step.expected_output,
-                    context=context_str,
-                    available_files=files_str
-                )
+                prompt = parse_method_step_to_prompt(step=step, step_results=step_results, exp_dir=exp_dir)
                 return FunctionTargetResult(
                     target=AgentTarget(ra),
                     messages=prompt,
                     context_variables=context_variables
                 )
             else:  # Engineer
-                timestamp = exp_dir.name.replace("code_", "")
-                prompt = ENGINEER_STEP_PROMPT.format(
-                    step_id=step.step_id,
-                    task=task,
-                    idea=selected_idea_content,
-                    description=step.description,
-                    expected_output=step.expected_output,
-                    available_files=files_str,
-                    context=context_str,
-                    timestamp=timestamp
-                )
+                prompt = parse_method_step_to_prompt(step=step, step_results=step_results, exp_dir=exp_dir)
                 return FunctionTargetResult(
                     target=AgentTarget(engineer),
                     messages=prompt,
@@ -364,7 +251,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             current_idx = context_variables.get("current_step_index", 0)
             exec_order = context_variables.get("execution_order", [])
             step_results = context_variables.get("step_results", {})
-            step_retries = context_variables.get("step_retries", {})
+            #step_retries = context_variables.get("step_retries", {})
 
             step_id = exec_order[current_idx]
             step = steps_dict[step_id]
@@ -422,6 +309,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
                 # Check if this is from CodeExecutor - if so, return to Engineer for review
                 if step.assignee == "Engineer":
+                    context_variables["step_status"] = "check"
                     return FunctionTargetResult(
                         target=AgentTarget(engineer),
                         messages=f"Code execution completed. Output:\n{output_text}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, continue working.",
@@ -509,17 +397,16 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
             # Check for STEP_COMPLETE marker only (code is handled elsewhere).
             if "==STEP_COMPLETE==" not in output_text:
+                context_variables["step_status"] = "plan&execute"
                 return FunctionTargetResult(
                     target=AgentTarget(engineer),
                     messages=(
-                        "No STEP_COMPLETE marker found. Check the result files."
-                        "If you confirm the result already exists and is correct, respond with either:\n\n"
-                        "1) A Python code block to continue working, or\n"
-                        "2) The completion format:\n"
-                        "==========STEP_COMPLETE==========\n[brief summary]"
+                        f"No ==STEP_COMPLETE== marker found. Continue your work following the step {step_id}."
                     ),
                     context_variables=context_variables,
                 )
+            else:
+                context_variables["step_status"] = "complete"
 
             log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} marked as complete by Engineer")
 
@@ -558,39 +445,45 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             context_variables["current_step_index"] = current_idx + 1
 
             # Move to next step in the execution graph.
+            context_variables["step_status"] = "plan&execute"
             return step_dispatcher(output, context_variables)
-
-        def _handle_code_response(
-            output,
-            context_variables: ContextVariables,
-            *,
-            allow_step_completion: bool,
+        
+        def step_execution(
+                output,
+                ctx: ContextVariables
         ) -> FunctionTargetResult:
-            """Shared logic for Engineer / CodeDebugger responses that may contain code blocks."""
-            output_text = str(output).strip()
+            """
+            Execute the detailed experiment instructions generated by the engineer.
+            """
+            if ctx["step_status"] == "check":
+                target = check_engineer_completion(output, ctx)
+            # For code-base experiments
+            elif ctx["step_status"] == "plan&execute":
+                backend = ctx.get("backend")
+                instruction = str(output)
+                if backend == "autogen":
+                    # TODO
+                    results = autogen_codebase_experiment(
+                        instruction,
+                        # ctx.get("workspace_dir"),
+                        # ctx.get("experiment_name"),
+                        # ctx.get("backend")
+                    )
+                elif backend == "opencode":
+                    results = opencode_codebase_experiment(
+                        instruction,
+                        # ctx.get("workspace_dir"),
+                        # ctx.get("experiment_name"),
+                        # ctx.get("backend")
+                    )
+                
+                # For wet experiments
+                # TODO
 
-            # If a code block is present, execute it and route by exit code.
-            if "```python" in output_text or "```" in output_text:
-                complete_code_block = extract_complete_code_block(output_text)
+                target = process_step_result(results, context_variables=ctx)
+            return target
 
-                step_executor = context_variables.get("step_code_executor")
-                if step_executor is None:
-                    step_executor = bootstrap_executor  # Fallback
-
-                execution_output = execute_code_directly(complete_code_block, step_executor)
-                return process_step_result(execution_output, context_variables)
-
-            step_id = context_variables.get("current_step_id", "step_id")
             
-            # No code block: Engineer can attempt to mark step complete; Debugger must try again.
-            if allow_step_completion:
-                return check_engineer_completion(output, context_variables)
-
-            return FunctionTargetResult(
-                target=AgentTarget(code_debugger),
-                messages=CODE_DEBUG_PROMPT.format(step_id=step_id, output_text=output_text),
-                context_variables=context_variables,
-            )
 
 
         initial_context = ContextVariables(data={
@@ -599,6 +492,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             "steps": [step.model_dump() for step in steps],
             "step_results": {},
             "step_retries": {},
+            "step_status": "plan&execute", #plan&execute -> check -> plan&execute / complete]
+            "backend": backend,
             "max_retries": max_retries,
             "exp_dir": str(exp_dir)
         })
@@ -608,32 +503,45 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         ra.handoffs.set_after_work(FunctionTarget(process_step_result))
         engineer.handoffs.set_after_work(
             FunctionTarget(lambda output, context_variables:
-                           _handle_code_response(output, context_variables, allow_step_completion=True))
+                           step_execution(output, context_variables))
         )
-        code_debugger.handoffs.set_after_work(
-            FunctionTarget(lambda output, context_variables:
-                           _handle_code_response(output, context_variables, allow_step_completion=False))
-        )
+        # code_debugger.handoffs.set_after_work(
+        #     FunctionTarget(lambda output, context_variables:
+        #                    _handle_code_response(output, context_variables, allow_step_completion=False))
+        # )
         analyst.handoffs.set_after_work(TerminateTarget())
 
         pattern = DefaultPattern(
             initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
-            agents=[ra, engineer, code_debugger, analyst],
-            user_agent=engineer,
+            agents=[ra, engineer, analyst],
+            #user_agent=engineer,
             context_variables=initial_context,
             group_manager_args={"llm_config": llm_config}
         )
 
-        # Start execution with first step
+        # Construct the inital messages
+        # 1. Research Context
+        context_prompt = EXPERIMENT_EXECUTION_CONTEXT_PROMPT.format(
+            task=task_content,
+            idea=extract_selected_idea(idea_content),
+        )
+        #context_messages = TextMessage(content=context_prompt, source="user")
+        # 2. Step1 Prompt
         first_step = steps_dict[execution_order[0]]
-        first_dispatch = _dispatch_to_agent(first_step, initial_context, task_content, idea_content, {})
-        first_prompt = first_dispatch.messages
+        first_step_prompt = parse_method_step_to_prompt(first_step, step_results={}, exp_dir=exp_dir)
+        #first_step_messages = TextMessage(content=first_step_prompt, source="user")
+
+        initial_messages = [
+            {"role": "user", "content": context_prompt},
+            {"role": "user", "content": first_step_prompt}
+        ]
+        print(initial_messages)
 
         log_stage(workspace_dir, "experiment_execution", "Starting step-by-step execution")
 
         result, context, last_agent = initiate_group_chat(
             pattern=pattern,
-            messages=first_prompt,
+            messages=initial_messages,
             max_rounds=len(execution_order) * (max_retries + 2) + 5
         )
 
@@ -673,7 +581,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             agent_chat_messages={
                 ra.name: ra.chat_messages,
                 engineer.name: engineer.chat_messages,
-                code_debugger.name: code_debugger.chat_messages,
+                #code_debugger.name: code_debugger.chat_messages,
                 analyst.name: analyst.chat_messages,
             }
         )
@@ -702,6 +610,46 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     except Exception as e:
         log_stage(workspace_dir, "experiment_execution", f"Error: {str(e)}")
         raise WorkflowError(f"Experiment execution failed: {str(e)}")
+
+# utils
+
+def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: Path) -> str:
+    # Collect file paths from previous steps
+    available_files = []
+    dep_summaries = []
+    for dep_id in step.dependencies:
+        if dep_id in step_results:
+            dep_result = step_results[dep_id]
+            # Get truncated summary
+            dep_summary = dep_result.get('output', '')[:200]
+            dep_summaries.append(f"Step {dep_id}: {dep_summary}")
+
+            dep_files = dep_result.get('files', [])
+            available_files.extend(dep_files)
+
+    context_str = "\n".join(dep_summaries) if dep_summaries else "No previous results"
+    files_str = "\n".join([f"- {f}" for f in available_files]) if available_files else "No files available from previous steps"
+    
+    if step.assignee == "RA":
+        prompt = RA_STEP_PROMPT.format(
+            step_id=step.step_id,
+            description=step.description,
+            expected_output=step.expected_output,
+            context=context_str,
+            available_files=files_str
+        )
+    else:  # Engineer
+        timestamp = exp_dir.name.replace("code_", "")
+        prompt = ENGINEER_STEP_PLAN_PROMPT.format(
+            step_id=step.step_id,
+            description=step.description,
+            expected_output=step.expected_output,
+            available_files=files_str,
+            context=context_str,
+            timestamp=timestamp
+        )
+    return prompt
+
 
 
 def extract_selected_idea(idea_content: str) -> str:
@@ -758,3 +706,80 @@ def parse_method_markdown(method_md: str) -> tuple[List[MethodStep], List[int]]:
         execution_order = [step.step_id for step in sorted(steps, key=lambda s: s.step_id)]
 
     return steps, execution_order
+
+
+def extract_complete_code_block(message: str) -> str:
+    """Extract complete code block from first ``` to last ```"""
+    text = message.strip()
+
+    # Find first ```
+    first_fence = text.find("```")
+    if first_fence == -1:
+        return message
+
+    # Find last ```
+    last_fence = text.rfind("```")
+    if last_fence == -1 or last_fence <= first_fence:
+        return message
+
+    # Extract from first ``` to last ```
+    return text[first_fence:last_fence + 3]
+
+def execute_code_directly(code_text: str, executor: LocalCommandLineCodeExecutor) -> str:
+    """Execute code directly by creating CodeBlock, bypassing message parsing"""
+    # Extract code content from the code block
+    if code_text.startswith("```"):
+        code_start = code_text.find("\n", code_text.find("```")) + 1
+        code_end = code_text.rfind("```")
+        code_content = code_text[code_start:code_end].strip()
+    else:
+        code_content = code_text
+
+    code_block = CodeBlock(code=code_content, language="python")
+    result = executor.execute_code_blocks([code_block])
+
+    if result.exit_code == 0:
+        output = f"exitcode: {result.exit_code} (execution succeeded)\nCode output: {result.output}"
+    else:
+        output = f"exitcode: {result.exit_code} (execution failed)\nCode output: {result.output}"
+
+    return output
+
+def sanitize_dir_name(name: str) -> str:
+    """Convert step description to safe directory name"""
+    import re
+    name = re.sub(r'[^\w\s-]', '', name)
+    name = re.sub(r'[-\s]+', '_', name)
+    return name[:50].strip('_').lower() or 'step'
+
+def get_step_dir(step: MethodStep, exp_dir: Path) -> Path:
+    """Get unified experiment directory for all steps"""
+    step_dir = exp_dir
+    step_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import json
+        meta_path = step_dir / f"step_{step.step_id}_meta.json"
+        if not meta_path.exists():
+            meta = {
+                "step_id": step.step_id,
+                "description": step.description,
+                "assignee": step.assignee,
+                "dependencies": step.dependencies,
+                "expected_output": step.expected_output,
+                "work_dir": str(step_dir),
+            }
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        # Best-effort only; do not fail workflow due to metadata writing.
+        pass
+    return step_dir
+
+def _get_file_snapshot(step_dir: Path) -> set:
+    """Get snapshot of all files in step directory before execution"""
+    if not step_dir.exists():
+        return set()
+    all_files = set(step_dir.rglob("*"))
+    return {f for f in all_files if f.is_file()}
+
+def opencode_codebase_experiment(instruction: str):
+    return "exitcode: 0. Experiment completed successfully!"
