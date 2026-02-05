@@ -55,11 +55,11 @@ class OpenCodeClient:
             "patch": True,
         }
 
-        print(f"session_id: {self.session_id}")
-        print(f"model_id: {self._model_id}")
-        print(f"provider_id: {self._provider_id}")
-        print(f"parts: {parts}")
-        print(f"tools: {tools}")
+        # print(f"session_id: {self.session_id}")
+        # print(f"model_id: {self._model_id}")
+        # print(f"provider_id: {self._provider_id}")
+        # print(f"parts: {parts}")
+        # print(f"tools: {tools}")
 
         resp = self.client.session.chat(
             id=self.session_id,
@@ -69,7 +69,7 @@ class OpenCodeClient:
             tools=tools,
         )
 
-        print(f"raw_response: {resp}")
+        # print(f"raw_response: {resp}")
 
         return resp.model_dump()
 

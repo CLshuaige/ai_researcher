@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 try:
-    import opencode_client
+    from researcher.integrations.opencode import opencode_client
 
     OpenCodeClient = opencode_client.OpenCodeClient
     check_opencode_availability = opencode_client.check_opencode_availability
@@ -60,9 +60,9 @@ class OpenCodeExecutor:
             opencode.create_session(workspace_dir)
 
             # with auto-debugging
-            print("Sending instruction to OpenCode:", full_instruction)
+            #print("Sending instruction to OpenCode:", full_instruction)
             raw = opencode.send_instruction(full_instruction)
-            print("OpenCode result:", raw)
+            #print("OpenCode result:", raw)
             out = self._parse_response(raw)
             #out["raw"] = raw
             return out

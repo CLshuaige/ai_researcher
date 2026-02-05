@@ -30,7 +30,6 @@ from researcher.utils import (
     save_agent_history,
     deduplicate_long_repeats,
 )
-from researcher.integrations import OpenCodeExecutor, get_opencode_server_url
 from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
     ENGINEER_STEP_PROMPT,
@@ -41,6 +40,7 @@ from researcher.prompts.templates import (
 )
 from researcher.exceptions import WorkflowError
 
+from researcher.integrations.opencode import opencode_codebase_experiment
 
 def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     """Execute experiments through multi-agent collaboration"""
@@ -104,12 +104,6 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         engineer = EngineerAgent().create_agent(llm_config, enable_context_compression=False)
         #code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
-                
-        opencode_base_url = get_opencode_server_url()
-        opencode_executor = OpenCodeExecutor(
-            opencode_base_url=opencode_base_url,
-            timeout=timeout
-        )
 
         # Limit Engineer's message history to preserve system prompt and recent exchanges,
         # avoiding destructive summarization of code that could make it non-executable
@@ -472,7 +466,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 elif backend == "opencode":
                     results = opencode_codebase_experiment(
                         instruction,
-                        # ctx.get("workspace_dir"),
+                        workspace_dir=ctx.get("workspace_dir"),
                         # ctx.get("experiment_name"),
                         # ctx.get("backend")
                     )
@@ -780,6 +774,3 @@ def _get_file_snapshot(step_dir: Path) -> set:
         return set()
     all_files = set(step_dir.rglob("*"))
     return {f for f in all_files if f.is_file()}
-
-def opencode_codebase_experiment(instruction: str):
-    return "exitcode: 0. Experiment completed successfully!"
