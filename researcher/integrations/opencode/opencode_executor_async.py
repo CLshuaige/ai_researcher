@@ -46,22 +46,22 @@ class OpenCodeExecutor:
         self.provider_id = provider_id
         self.model_id = model_id
 
-    def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
+    async def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
         # Prepend debugging guidance to instruction
         full_instruction = OPENCODE_NOTE + "\n\n" + instruction
 
-        with OpenCodeClient(
+        async with OpenCodeClient(
             base_url=self.opencode_base_url,
             timeout=self.timeout,
             config_file=self.config_file,
             provider_id=self.provider_id,
             model_id=self.model_id,
         ) as opencode:
-            opencode.create_session(workspace_dir)
+            await opencode.create_session(workspace_dir)
 
             # with auto-debugging
             print("Sending instruction to OpenCode:", full_instruction)
-            raw = opencode.send_instruction(full_instruction)
+            raw = await opencode.send_instruction(full_instruction)
             print("OpenCode result:", raw)
             out = self._parse_response(raw)
             #out["raw"] = raw
@@ -84,8 +84,8 @@ def _get_default_executor() -> OpenCodeExecutor:
     return _default_executor
 
 
-def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[str, Any]:
-    text_response =  _get_default_executor().execute_instruction(instruction, workspace_dir)
+async def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[str, Any]:
+    text_response =  await _get_default_executor().execute_instruction(instruction, workspace_dir)
 
     # Parse
     # TODO
@@ -97,10 +97,11 @@ def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[
 
 
 if __name__ == "__main__":
-    def _main():
-        return opencode_codebase_experiment(
+    import asyncio
+    async def _main():
+        return await opencode_codebase_experiment(
             "Write a simple Python script that prints 'Hello, OpenCode!'",
             Path("."),
         )
 
-    print(_main())
+    print(asyncio.run(_main()))
