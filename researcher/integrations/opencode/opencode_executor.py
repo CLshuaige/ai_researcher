@@ -23,27 +23,6 @@ OPENCODE_NOTE = """## Workflow
 - Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step."""
 
 
-def _parse_response(raw: Dict[str, Any]) -> Dict[str, Any]:
-    info = raw.get("info") or raw
-    parts = info.get("parts") or []
-    text = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
-    return {
-        "text": text,
-        "parts": parts,
-        "id": info.get("id"),
-        "session_id": info.get("sessionID"),
-        "role": info.get("role"),
-        "time": info.get("time"),
-        "parent_id": info.get("parentID"),
-        "model_id": info.get("modelID"),
-        "provider_id": info.get("providerID"),
-        "mode": info.get("mode"),
-        "agent": info.get("agent"),
-        "path": info.get("path"),
-        "cost": info.get("cost"),
-        "tokens": info.get("tokens"),
-        "finish": info.get("finish"),
-    }
 
 
 class OpenCodeExecutor:
@@ -84,9 +63,15 @@ class OpenCodeExecutor:
             print("Sending instruction to OpenCode:", full_instruction)
             raw = await opencode.send_instruction(full_instruction)
             print("OpenCode result:", raw)
-            out = _parse_response(raw)
-            out["raw"] = raw
+            out = self._parse_response(raw)
+            #out["raw"] = raw
             return out
+        
+    def _parse_response(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        #info = raw.get("info") or raw
+        parts = raw.get("parts") or []
+        text_response = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        return text_response
 
 
 _default_executor: Optional[OpenCodeExecutor] = None
@@ -100,7 +85,15 @@ def _get_default_executor() -> OpenCodeExecutor:
 
 
 async def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[str, Any]:
-    return await _get_default_executor().execute_instruction(instruction, workspace_dir)
+    text_response =  await _get_default_executor().execute_instruction(instruction, workspace_dir)
+
+    # Parse
+    # TODO
+    exp_results = text_response
+
+
+    return exp_results
+
 
 
 if __name__ == "__main__":
