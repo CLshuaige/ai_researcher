@@ -69,7 +69,7 @@ class OpenCodeClient:
             tools=tools,
         )
 
-        print(f"resp: {resp}")
+        print(f"raw_response: {resp}")
         
         return resp.model_dump()
 
@@ -82,7 +82,8 @@ class OpenCodeClient:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.close_session()
+        # await self.close_session()
+        pass
 
 
 async def test_this():
@@ -92,7 +93,7 @@ async def test_this():
     result = await client.send_instruction(
         "Write a python script to print 'hello 12345', and report the path of the script."
     )
-    await client.close_session()
+    # await client.close_session()
 
     return result
 
@@ -100,4 +101,4 @@ async def test_this():
 if __name__ == "__main__":
     import asyncio
 
-    print(asyncio.run(test_this()))
+    asyncio.run(test_this())

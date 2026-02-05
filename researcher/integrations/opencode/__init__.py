@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any
 
-from .opencode_executor import OpenCodeExecutor
+from .opencode_executor import OpenCodeExecutor, opencode_codebase_experiment
 
 
 def get_opencode_config() -> Dict[str, Any]:
@@ -31,6 +31,7 @@ def get_opencode_server_url() -> str:
 
 __all__ = [
     "OpenCodeExecutor",
+    "opencode_codebase_experiment",
     "get_opencode_config",
     "get_opencode_server_url",
 ]

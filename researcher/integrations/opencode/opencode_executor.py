@@ -1,5 +1,8 @@
 """
-OpenCode Executor Module
+OpenCode executor. Usage:
+
+  from researcher.integrations.opencode import opencode_codebase_experiment
+  result = await opencode_codebase_experiment("instruction", workspace_dir)  # -> {text, parts, id, session_id, role, time, parent_id, model_id, provider_id, mode, agent, path, cost, tokens, finish, raw}
 """
 
 from pathlib import Path
@@ -15,9 +18,32 @@ except ImportError as e:
     raise ImportError(f"OpenCode client import failed: {e}")
 
 
-OPENCODE_DEBUGGING_NOTE = """## Debugging (when errors occur)
-- Prefer the **edit** tool to fix specific lines or sections; avoid overwriting entire files with the write tool when only a small change is needed.
-- Use **read** to inspect file contents before editing. Make minimal, targeted fixes and re-run."""
+OPENCODE_NOTE = """## Workflow
+- After writing or changing code, run it automatically. Use the run result to decide whether to fix or extend the program; repeat until the instruction is fully satisfied.
+- Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step."""
+
+
+def _parse_response(raw: Dict[str, Any]) -> Dict[str, Any]:
+    info = raw.get("info") or raw
+    parts = info.get("parts") or []
+    text = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
+    return {
+        "text": text,
+        "parts": parts,
+        "id": info.get("id"),
+        "session_id": info.get("sessionID"),
+        "role": info.get("role"),
+        "time": info.get("time"),
+        "parent_id": info.get("parentID"),
+        "model_id": info.get("modelID"),
+        "provider_id": info.get("providerID"),
+        "mode": info.get("mode"),
+        "agent": info.get("agent"),
+        "path": info.get("path"),
+        "cost": info.get("cost"),
+        "tokens": info.get("tokens"),
+        "finish": info.get("finish"),
+    }
 
 
 class OpenCodeExecutor:
@@ -43,7 +69,7 @@ class OpenCodeExecutor:
 
     async def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
         # Prepend debugging guidance to instruction
-        full_instruction = OPENCODE_DEBUGGING_NOTE + "\n\n" + instruction
+        full_instruction = OPENCODE_NOTE + "\n\n" + instruction
 
         async with OpenCodeClient(
             base_url=self.opencode_base_url,
@@ -56,30 +82,33 @@ class OpenCodeExecutor:
 
             # with auto-debugging
             print("Sending instruction to OpenCode:", full_instruction)
-            result = await opencode.send_instruction(full_instruction)
-            print("OpenCode result:", result)
+            raw = await opencode.send_instruction(full_instruction)
+            print("OpenCode result:", raw)
+            out = _parse_response(raw)
+            out["raw"] = raw
+            return out
 
-            return result
 
-    @staticmethod
-    def prepare_instruction(instruction: str) -> str:
-        return OPENCODE_DEBUGGING_NOTE + "\n\n" + instruction
+_default_executor: Optional[OpenCodeExecutor] = None
 
-    @staticmethod
-    def is_available() -> bool:
-        return OPENCODE_AVAILABLE
 
-async def test_executor():
-    executor = OpenCodeExecutor()
+def _get_default_executor() -> OpenCodeExecutor:
+    global _default_executor
+    if _default_executor is None:
+        _default_executor = OpenCodeExecutor()
+    return _default_executor
 
-    result = await executor.execute_instruction(
-        "Write a simple Python script that prints 'Hello, OpenCode!'", 
-        Path(".")
-    )
 
-    return result
+async def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[str, Any]:
+    return await _get_default_executor().execute_instruction(instruction, workspace_dir)
+
 
 if __name__ == "__main__":
     import asyncio
-    
-    print(asyncio.run(test_executor()))
+    async def _main():
+        return await opencode_codebase_experiment(
+            "Write a simple Python script that prints 'Hello, OpenCode!'",
+            Path("."),
+        )
+
+    print(asyncio.run(_main()))
