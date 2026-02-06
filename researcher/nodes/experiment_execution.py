@@ -2,6 +2,7 @@ from typing import Dict, Any, List
 from pathlib import Path
 import re
 
+from autogen import ConversableAgent
 from autogen.agentchat import initiate_group_chat
 from autogen.coding import LocalCommandLineCodeExecutor, CodeBlock
 from autogen.code_utils import create_virtual_env
@@ -34,7 +35,7 @@ from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
     ENGINEER_STEP_PROMPT,
     EXPERIMENT_EXECUTION_CONTEXT_PROMPT,
-    ENGINEER_STEP_PLAN_PROMPT,
+    ENGINEER_STEP_GUIDANCE_SHORT_PROMPT,
     RA_STEP_PROMPT,
     CODE_DEBUG_PROMPT,
 )
@@ -61,6 +62,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         use_virtual_env = config["use_virtual_env"]
         virtual_env_path = Path(config["virtual_env_path"])
         backend = config["backend"]
+        human_in_the_loop = config["human_in_the_loop"]
 
         llm_config = get_llm_config()
 
@@ -105,11 +107,15 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         #code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
         analyst = AnalystAgent().create_agent(llm_config)
 
+        # human
+        if human_in_the_loop:
+            human = ConversableAgent(name="Human", human_input_mode="ALWAYS")
+
         # Limit Engineer's message history to preserve system prompt and recent exchanges,
         # avoiding destructive summarization of code that could make it non-executable
         engineer_history_limiter = MessageHistoryLimiter(
-            max_messages = 6,
-            keep_first_message = False,
+            max_messages = 12,
+            keep_first_message = True,
         )
         engineer_token_limiter = MessageTokenLimiter(
             max_tokens=25000,
@@ -256,36 +262,6 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             # Format: "exitcode: {exit_code} ({status})\nCode output: {output}"
             exit_code = None
             execution_status = "unknown"
-            
-            exitcode_match = re.search(r'exitcode:\s*(\d+)', output_text)
-            
-            if "execution succeeded" in output_text.lower():
-                if exitcode_match:
-                    exit_code = int(exitcode_match.group(1))
-                    if exit_code == 0:
-                        execution_status = "success"
-                    else:
-                        execution_status = "failed"
-                        log_stage(workspace_dir, "experiment_execution",
-                                 f"[✗] Step {step_id} execution failed with exit code {exit_code} despite 'succeeded' message: {output_text}")
-                else:
-                    execution_status = "success"
-            elif "execution failed" in output_text.lower():
-                execution_status = "failed"
-                if exitcode_match:
-                    exit_code = int(exitcode_match.group(1))
-                log_stage(workspace_dir, "experiment_execution",
-                         f"[✗] Step {step_id} execution failed: {output_text}")
-            elif exitcode_match:
-                exit_code = int(exitcode_match.group(1))
-                execution_status = "success" if exit_code == 0 else "failed"
-                if execution_status == "failed":
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[✗] Step {step_id} execution failed with exit code {exit_code}: {output_text}")
-            elif any(keyword in output_text.lower() for keyword in ["error", "exception", "traceback"]):
-                execution_status = "failed"
-                log_stage(workspace_dir, "experiment_execution",
-                         f"[✗] Step {step_id} execution likely failed (error keywords detected): {output_text}")
 
             if execution_status == "success":
                 exit_info = f" (exit: {exit_code})" if exit_code is not None else ""
@@ -303,13 +279,13 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
                 # Check if this is from CodeExecutor - if so, return to Engineer for review
                 if step.assignee == "Engineer":
-                    context_variables["step_status"] = "check"
-                    return FunctionTargetResult(
-                        target=AgentTarget(engineer),
-                        messages=f"Code execution completed. Output:\n{output_text}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, continue working.",
-                        context_variables=context_variables
-                    )
-                else:
+                    if context_variables["step_status"] == "check":
+                        return FunctionTargetResult(
+                            target=AgentTarget(engineer),
+                            messages=f"Experiment execution completed. Output:\n{output_text}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, continue working.",
+                            context_variables=context_variables
+                        )
+                elif step.assignee == "RA":
                     # RA steps complete immediately after execution
                     step_results[step_id] = {
                         "step_id": step_id,
@@ -442,42 +418,85 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             context_variables["step_status"] = "plan&execute"
             return step_dispatcher(output, context_variables)
         
-        def step_execution(
+        def handle_output(
                 output,
                 ctx: ContextVariables
         ) -> FunctionTargetResult:
             """
-            Execute the detailed experiment instructions generated by the engineer.
+            handle output from the agent in the current step.
             """
-            if ctx["step_status"] == "check":
-                target = check_engineer_completion(output, ctx)
-            # For code-base experiments
-            elif ctx["step_status"] == "plan&execute":
-                backend = ctx.get("backend")
-                instruction = str(output)
-                if backend == "autogen":
-                    # TODO
-                    results = autogen_codebase_experiment(
-                        instruction,
-                        # ctx.get("workspace_dir"),
-                        # ctx.get("experiment_name"),
-                        # ctx.get("backend")
-                    )
-                elif backend == "opencode":
-                    results = opencode_codebase_experiment(
-                        instruction,
-                        workspace_dir=ctx.get("workspace_dir"),
-                        # ctx.get("experiment_name"),
-                        # ctx.get("backend")
-                    )
-                
-                # For wet experiments
-                # TODO
+            current_step_idx = ctx.get("current_step_index", 0)
+            exec_order = ctx.get("execution_order", [])
+            step_results = ctx.get("step_results", {})
 
-                target = process_step_result(results, context_variables=ctx)
+            step_id = exec_order[current_step_idx]
+            step = steps_dict[step_id]
+            #print(f"ctx['step_status']: {ctx['step_status']}")
+            #print(f"step.assignee: {step.assignee}")
+
+            #print(f"step_status: {ctx['step_status']}")
+            if step.assignee.lower() == "engineer":
+                if ctx["step_status"] == "check":
+                    target = check_engineer_completion(output, ctx)
+                # For code-base experiments
+                elif ctx["step_status"] == "plan&execute":
+                    backend = ctx.get("backend")
+                    instruction = str(output)
+                    if backend == "autogen":
+                        # TODO
+                        results = autogen_codebase_experiment(
+                            instruction,
+                            # ctx.get("workspace_dir"),
+                            # ctx.get("experiment_name"),
+                            # ctx.get("backend")
+                        )
+                    elif backend == "opencode":
+                        results, session_id = opencode_codebase_experiment(
+                            instruction,
+                            workspace_dir=ctx.get("workspace_dir"),
+                            session_id=ctx.get("session_id"),
+                            # ctx.get("experiment_name"),
+                            # ctx.get("backend")
+                        )
+
+                        ctx["session_id"] = session_id 
+                        ctx["step_status"] = "check"
+                        if human_in_the_loop:
+                            target = FunctionTargetResult(
+                                target=AgentTarget(human),
+                                messages=f"Experiment execution completed. Results:\n{results}\n\nReview the results. Confirm that the results are true and accurate. If not, please provide feedback on what needs to be improved.",
+                                context_variables=ctx
+                            )
+                            return target
+                        # Check the results by human-in-the-loop
+
+
+                        # Ask engineer to check the experiment results
+                        messages = f"Experiment execution completed. Results:\n{results}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, provide additional guidances to complete the step."
+                        target = FunctionTargetResult(
+                                target=AgentTarget(engineer),
+                                messages=messages,
+                                context_variables=ctx
+                            )
+                    else:
+                        # For wet experiments
+                        # TODO
+                        raise ValueError(f"Invalid backend: {backend}")
+
+            elif step.assignee == "RA":
+                # TODD
+                pass
             return target
 
-            
+        def human_to_agent(output, ctx: ContextVariables) -> FunctionTargetResult:
+            messages = f"Review to the experiment results and the feedback from the human. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, provide additional guidances to complete the step."
+            target = FunctionTargetResult(
+                        target=AgentTarget(engineer),
+                        messages=messages,
+                        context_variables=ctx
+                    )
+            return target
+
 
 
         initial_context = ContextVariables(data={
@@ -491,27 +510,41 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             "max_retries": max_retries,
             "exp_dir": str(exp_dir)
         })
+        if backend == "opencode":
+            initial_context.update({"session_id": None}) # session_id for current step
+
 
         # Register handoffs for multi-round workflow
         # RA: simple flow - execute and complete
-        ra.handoffs.set_after_work(FunctionTarget(process_step_result))
+        ra.handoffs.set_after_work(FunctionTarget(handle_output))
         engineer.handoffs.set_after_work(
             FunctionTarget(lambda output, context_variables:
-                           step_execution(output, context_variables))
+                           handle_output(output, context_variables))
         )
+        if human_in_the_loop:
+            human.handoffs.set_after_work(FunctionTarget(human_to_agent))
         # code_debugger.handoffs.set_after_work(
         #     FunctionTarget(lambda output, context_variables:
         #                    _handle_code_response(output, context_variables, allow_step_completion=False))
         # )
         analyst.handoffs.set_after_work(TerminateTarget())
 
-        pattern = DefaultPattern(
-            initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
-            agents=[ra, engineer, analyst],
-            #user_agent=engineer,
-            context_variables=initial_context,
-            group_manager_args={"llm_config": llm_config}
-        )
+        if human_in_the_loop:
+            pattern = DefaultPattern(
+                initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
+                agents=[ra, engineer, analyst, human],
+                user_agent=human,
+                context_variables=initial_context,
+                group_manager_args={"llm_config": llm_config}
+            )
+        else:
+            pattern = DefaultPattern(
+                initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
+                agents=[ra, engineer, analyst],
+                #user_agent=engineer,
+                context_variables=initial_context,
+                group_manager_args={"llm_config": llm_config}
+            )
 
         # Construct the inital messages
         # 1. Research Context
@@ -529,7 +562,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             {"role": "user", "content": context_prompt},
             {"role": "user", "content": first_step_prompt}
         ]
-        print(initial_messages)
+        #print(initial_messages)
 
         log_stage(workspace_dir, "experiment_execution", "Starting step-by-step execution")
 
@@ -634,7 +667,7 @@ def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: P
         )
     else:  # Engineer
         timestamp = exp_dir.name.replace("code_", "")
-        prompt = ENGINEER_STEP_PLAN_PROMPT.format(
+        prompt = ENGINEER_STEP_GUIDANCE_SHORT_PROMPT.format(
             step_id=step.step_id,
             description=step.description,
             expected_output=step.expected_output,

@@ -111,14 +111,14 @@ You are a Technical Director and Experiment Execution Guide specialized in scien
 ## Response Protocol
 Choose EXACTLY ONE response format, DO NOT combine formats:
 1. **ACTIONABLE INSTRUCTIONS**:
-   ==========EXPERIMENT_GUIDANCE==========
    - Clear step-by-step guidance for the experiment executor
    - Explicitly state inputs, outputs, tools, and expected artifacts
    - Include verification criteria to judge whether the step succeeded
+   - End with "==========EXPERIMENT_GUIDANCE=========="
 2. **STEP COMPLETION**:
-   ==========STEP_COMPLETE==========
    - Brief summary of what has been achieved
    - Criteria confirming that all requirements are satisfied
+   - If the step is complete, end with "==========STEP_COMPLETE=========="
 
 ## Instruction Quality Standards
 - Instructions must be unambiguous, operational, and directly actionable
@@ -566,7 +566,7 @@ EXPERIMENT_EXECUTION_CONTEXT_PROMPT = """You are working on the following resear
 """
 
 # Experiment Execution Instuctions
-ENGINEER_STEP_PLAN_PROMPT = """You are responsible for producing execution guidance for Step {step_id} of a research project.
+ENGINEER_STEP_GUIDANCE_PROMPT = """You are responsible for producing execution guidance for Step {step_id} of a research project.
 
 ## Step Objective
 **Goal**: {description}
@@ -595,6 +595,27 @@ Provide clear, step-scoped execution guidance that includes:
 - How to verify that the Expected Output for this step has been successfully achieved
 
 The output should be instructional, precise, and self-contained, enabling execution of Step {step_id} without reference to future work.
+"""
+
+ENGINEER_STEP_GUIDANCE_SHORT_PROMPT = """You are generating concise engineering guidance for Step {step_id} of a research project.
+
+## Objective
+{description}
+
+## Expected Deliverable
+{expected_output}
+
+## Guidance Requirements
+- Output MUST be short and implementation-oriented.
+- The entire step should be achievable with **one or two code files only**.
+- Focus on **what to implement**, not how to reason.
+- Prefer concrete artifacts (e.g. script name, function name, data flow).
+- Do NOT explain background, theory, or future steps.
+- Do NOT include execution instructions or validation steps.
+- Do NOT mention planning or meta-commentary.
+
+## Output Format
+Produce a brief guidance (3-6 bullet points max) that directly tells the engineer what code to write to complete this step.
 """
 
 CODE_DEBUG_PROMPT = """Previous execution failed:

@@ -46,7 +46,12 @@ class OpenCodeExecutor:
         self.provider_id = provider_id
         self.model_id = model_id
 
-    def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
+    def execute_instruction(
+        self,
+        instruction: str,
+        workspace_dir: Path,
+        session_id: Optional[str] = None,
+    ) -> tuple[str, Optional[str]]:
         # Prepend debugging guidance to instruction
         full_instruction = OPENCODE_NOTE + "\n\n" + instruction
 
@@ -57,15 +62,19 @@ class OpenCodeExecutor:
             provider_id=self.provider_id,
             model_id=self.model_id,
         ) as opencode:
-            opencode.create_session(workspace_dir)
+            # If session_id is provided, continue that session; otherwise create a new one.
+            if session_id:
+                opencode.session_id = session_id
+            else:
+                opencode.create_session(workspace_dir)
 
             # with auto-debugging
             #print("Sending instruction to OpenCode:", full_instruction)
             raw = opencode.send_instruction(full_instruction)
             #print("OpenCode result:", raw)
-            out = self._parse_response(raw)
-            #out["raw"] = raw
-            return out
+            text = self._parse_response(raw)
+            
+            return text, opencode.session_id
         
     def _parse_response(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         #info = raw.get("info") or raw
@@ -84,23 +93,30 @@ def _get_default_executor() -> OpenCodeExecutor:
     return _default_executor
 
 
-def opencode_codebase_experiment(instruction: str, workspace_dir: Path) -> Dict[str, Any]:
-    text_response =  _get_default_executor().execute_instruction(instruction, workspace_dir)
+def opencode_codebase_experiment(
+    instruction: str,
+    workspace_dir: Path,
+    session_id: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    text_response, session_id = _get_default_executor().execute_instruction(
+        instruction, workspace_dir, session_id=session_id
+    )
 
     # Parse
     # TODO
     exp_results = text_response
 
-
-    return exp_results
+    return exp_results, session_id
 
 
 
 if __name__ == "__main__":
     def _main():
         return opencode_codebase_experiment(
-            "Write a simple Python script that prints 'Hello, OpenCode!'",
+            # "Write a simple Python script that prints 'Hello, OpenCode!'",
+            "再加一句Byebye",
             Path("."),
+            session_id="ses_3d31674e3ffeI5MekbM50tgEfZ"
         )
 
     print(_main())

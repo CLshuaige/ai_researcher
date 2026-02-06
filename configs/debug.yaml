@@ -40,6 +40,7 @@ researcher:
   experiment_execution:
     mode: "basic"
     backend: "opencode"
+    human_in_the_loop: true
     code_execution_timeout: 300  # seconds
     code_execution_retries: 5
     use_virtual_env: true
