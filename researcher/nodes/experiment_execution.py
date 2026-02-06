@@ -484,8 +484,16 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                         raise ValueError(f"Invalid backend: {backend}")
 
             elif step.assignee == "RA":
-                # TODD
-                pass
+                output_text = str(output)
+                step_results[step_id] = {
+                    "step_id": step_id,
+                    "status": "completed",
+                    "output": output_text,
+                    "execution_time": None
+                }
+                ctx["current_step_index"] = current_step_idx + 1
+                ctx["step_results"] = step_results
+                return step_dispatcher(output, ctx)
             return target
 
         def human_to_agent(output, ctx: ContextVariables) -> FunctionTargetResult:

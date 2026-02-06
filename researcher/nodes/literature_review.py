@@ -183,7 +183,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             extra_prompt = (
                 f"Task:\n{task_text}\n\n"
                 f"Papers:\n{combined_papers}\n\n"
-                "Use the above task and paper info to generate a summarized synthesis."
+                "Use the above task and paper info to generate a summarized synthesis in natural language, not json. "
+                "Write in academic style, focusing on key themes, methodologies, research gaps, and relevant findings."
             )
 
             # 我们把这个 prompt 放在 messages 最后 user 之前
