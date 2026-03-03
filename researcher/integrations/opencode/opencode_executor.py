@@ -20,7 +20,10 @@ except ImportError as e:
 
 OPENCODE_NOTE = """## Workflow
 - After writing or changing code, run it automatically. Use the run result to decide whether to fix or extend the program; repeat until the instruction is fully satisfied.
-- Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step."""
+- Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step.
+- Use the conda environment "{env_path}" to run the code.
+- Put all the files in the directory "{exp_dir}" for this step.
+"""
 
 
 
@@ -50,10 +53,11 @@ class OpenCodeExecutor:
         self,
         instruction: str,
         workspace_dir: Path,
+        env_path: Path,
         session_id: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         # Prepend debugging guidance to instruction
-        full_instruction = OPENCODE_NOTE + "\n\n" + instruction
+        full_instruction = OPENCODE_NOTE.format(exp_dir=workspace_dir, env_path=env_path) + "\n\n" + instruction
 
         with OpenCodeClient(
             base_url=self.opencode_base_url,
@@ -96,10 +100,11 @@ def _get_default_executor() -> OpenCodeExecutor:
 def opencode_codebase_experiment(
     instruction: str,
     workspace_dir: Path,
+    env_path: Path,
     session_id: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
     text_response, session_id = _get_default_executor().execute_instruction(
-        instruction, workspace_dir, session_id=session_id
+        instruction, workspace_dir, env_path, session_id=session_id
     )
 
     # Parse

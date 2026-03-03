@@ -73,8 +73,15 @@ log "Port $PORT is clean."
 ############################
 log "Starting vLLM serve..."
 
+export NCCL_IB_DISABLE=1
+export NCCL_SOCKET_IFNAME=ens1f0
+export NCCL_P2P_DISABLE=1
+export NCCL_SHM_DISABLE=0
+export NCCL_NET_GDR_LEVEL=0
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # 激活 vLLM 环境并启动服务
-exec conda run -n vllm-py-3.10 vllm serve \
+exec conda run -n vllm-coder vllm serve \
   "$MODEL_PATH" \
   --port "$PORT" \
   --host 0.0.0.0 \

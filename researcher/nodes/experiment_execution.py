@@ -44,608 +44,306 @@ from researcher.exceptions import WorkflowError
 from researcher.integrations.opencode import opencode_codebase_experiment
 
 def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
-    """Execute experiments through multi-agent collaboration"""
     workspace_dir = state["workspace_dir"]
-    log_stage(workspace_dir, "experiment_execution", "Starting experiment execution")
+    config = state["config"]["researcher"]["experiment_execution"]
+    backend = config["backend"]
+    max_retries = config["code_execution_retries"]
+    human_in_the_loop = config["human_in_the_loop"]
+    env_path = Path(config["virtual_env_path"])
 
-    try:
-        task_content = load_artifact_from_file(workspace_dir, "task")
-        idea_content = load_artifact_from_file(workspace_dir, "idea")
-        method_content = load_artifact_from_file(workspace_dir, "method")
+    task_content = load_artifact_from_file(workspace_dir, "task")
+    idea_content = load_artifact_from_file(workspace_dir, "idea")
+    method_content = load_artifact_from_file(workspace_dir, "method")
 
-        if not method_content:
-            raise WorkflowError("Method file not found")
+    steps, execution_order = parse_method_markdown(method_content)
+    steps_dict = {s.step_id: s for s in steps}
 
-        config = state["config"]["researcher"]["experiment_execution"]
-        timeout = config["code_execution_timeout"]
-        max_retries = config["code_execution_retries"]
-        use_virtual_env = config["use_virtual_env"]
-        virtual_env_path = Path(config["virtual_env_path"])
-        backend = config["backend"]
-        human_in_the_loop = config["human_in_the_loop"]
+    llm_config = get_llm_config()
 
-        llm_config = get_llm_config()
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    exp_dir = workspace_dir / "experiments" / f"exp_{timestamp}"
+    exp_dir.mkdir(parents=True, exist_ok=True)
 
-        # # Create Engineer-specific LLM config with lower temperature for more deterministic code generation
-        # engineer_llm_config = dict(llm_config)
-        # if "config_list" in engineer_llm_config:
-        #     for config in engineer_llm_config["config_list"]:
-        #         config["temperature"] = 0.3
+    # Agents
+    ra = RAAgent().create_agent(llm_config)
+    engineer = EngineerAgent().create_agent(llm_config)
+    analyst = AnalystAgent().create_agent(llm_config)
 
-        # coder_llm_config = get_llm_config(
-        #     config_path=get_default_config_path("llm_config_coder.json")
-        # )
+    if human_in_the_loop:
+        human = ConversableAgent(name="Human", human_input_mode="ALWAYS")
 
-        # Create experiment directory with timestamp
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        exp_dir = workspace_dir / "experiments" / f"code_{timestamp}"
-        exp_dir.mkdir(parents=True, exist_ok=True)
+    # ===============================
+    # Context
+    # ===============================
 
-        steps, execution_order = parse_method_markdown(method_content)
+    ctx = ContextVariables(data={
+        "execution_order": execution_order,
+        "current_index": 0,
+        "current_step_id": 1, # start from step1
+        "step_results": {},
+        "step_status": "plan",   # plan → check → done
+        "backend": backend,
+        "retry_count": 0,
+        "max_retries": max_retries,
+        "workspace_dir": workspace_dir,
+        "experiment_dir": exp_dir,
+        "env_path": env_path,
+        "session_id": None,
+    })
 
-        if not steps:
-            raise WorkflowError("No structured steps found in method")
+    # ===============================
+    # STEP DISPATCH
+    # ===============================
 
-        log_stage(workspace_dir, "experiment_execution", f"Parsed {len(steps)} steps, execution order: {execution_order}")
+    def dispatch_next_step(ctx: ContextVariables) -> FunctionTargetResult:
+        index = ctx["current_index"]
 
-        # Setup virtual environment for code execution
-        virtual_env_context = None
-        if use_virtual_env:
-            import os
-            venv_path = os.path.expanduser(virtual_env_path)
+        if index >= len(ctx["execution_order"]):
+            return FunctionTargetResult(
+                target=AgentTarget(analyst),
+                messages="All steps finished. Analyze results.",
+                context_variables=ctx,
+            )
 
-            if os.path.exists(venv_path):
-                log_stage(workspace_dir, "experiment_execution", f"Using existing environment at {venv_path}")
-                virtual_env_context = create_virtual_env(venv_path)
-            else:
-                raise WorkflowError(f"Virtual environment not found: {venv_path}")
+        step_id = ctx["execution_order"][index]
+        step = steps_dict[step_id]
 
-        # Agents
-        ra = RAAgent().create_agent(llm_config)
-        engineer = EngineerAgent().create_agent(llm_config, enable_context_compression=False)
-        #code_debugger = CodeDebuggerAgent().create_agent(coder_llm_config, enable_context_compression=False)
-        analyst = AnalystAgent().create_agent(llm_config)
+        ctx["current_step_id"] = step_id
+        ctx["step_status"] = "plan"
+        ctx["retry_count"] = 0
 
-        # human
-        if human_in_the_loop:
-            human = ConversableAgent(name="Human", human_input_mode="ALWAYS")
-
-        # Limit Engineer's message history to preserve system prompt and recent exchanges,
-        # avoiding destructive summarization of code that could make it non-executable
-        engineer_history_limiter = MessageHistoryLimiter(
-            max_messages = 12,
-            keep_first_message = True,
-        )
-        engineer_token_limiter = MessageTokenLimiter(
-            max_tokens=25000,
-            max_tokens_per_message=10000,
-            min_tokens=15000,
-            model="gpt-4-32k"
+        prompt = parse_method_step_to_prompt(
+            step=step,
+            step_results=ctx["step_results"],
+            exp_dir=ctx["experiment_dir"],
         )
 
-        transform_messages.TransformMessages(
-            transforms=[
-                engineer_history_limiter,
-                engineer_token_limiter
-            ]
-        ).add_to_agent(engineer)
+        target_agent = ra if step.assignee == "RA" else engineer
 
-        # transform_messages.TransformMessages(
-        #     transforms=[
-        #         engineer_history_limiter,
-        #         engineer_token_limiter
-        #     ]
-        # ).add_to_agent(code_debugger)
-        
-        # Deduplicate long repeats in Engineer's messages such as path results
-        engineer.register_hook("process_message_before_send", deduplicate_long_repeats)
+        return FunctionTargetResult(
+            target=AgentTarget(target_agent),
+            messages=prompt,
+            context_variables=ctx,
+        )
 
-        if backend == "autogen":
-            bootstrap_executor = LocalCommandLineCodeExecutor(
-                timeout=timeout,
-                work_dir=str(exp_dir),
-                virtual_env_context=virtual_env_context,
-            )
-        elif backend == "opencode":
-            #TODO: opencode
-            pass
+    # ===============================
+    # BACKEND EXECUTION
+    # ===============================
 
-        steps_dict = {step.step_id: step for step in steps}
+    def execute_backend(instruction: str, ctx: ContextVariables):
+        backend = ctx["backend"]
 
-        def step_dispatcher(output, context_variables: ContextVariables) -> FunctionTargetResult:
-            """Dispatch next step based on execution order and dependencies"""
-            current_idx = context_variables.get("current_step_index", 0)
-            exec_order = context_variables.get("execution_order", [])
-            step_results = context_variables.get("step_results", {})
-
-            # Check if all steps completed
-            if current_idx >= len(exec_order):
-                # Format results for analyst
-                results_summary = []
-                for step_id in exec_order:
-                    result = step_results.get(step_id, {})
-                    status = result.get("status", "unknown")
-                    output_text = result.get("output", "")
-                    results_summary.append(f"Step {step_id} ({status}): {output_text}")
-
-                message = RESULT_ANALYSIS_PROMPT.format(
-                    method=method_content,
-                    results="\n\n".join(results_summary)
-                )
-
-                return FunctionTargetResult(
-                    target=AgentTarget(analyst),
-                    messages=message,
-                    context_variables=context_variables
-                )
-
-            # Get next step
-            step_id = exec_order[current_idx]
-            step = steps_dict[step_id]
-
-            # Check dependencies
-            unmet_deps = []
-            for dep_id in step.dependencies:
-                dep_result = step_results.get(dep_id, {})
-                if dep_result.get("status") != "success":
-                    unmet_deps.append(dep_id)
-
-            if unmet_deps:
-                log_stage(workspace_dir, "experiment_execution", f"[!] Step {step_id} has unmet dependencies: {unmet_deps} (available: {list(step_results.keys())})")
-                # Try to find and execute unmet dependencies first
-                for dep_id in unmet_deps:
-                    if dep_id in steps_dict and dep_id not in [r.get("step_id") for r in step_results.values()]:
-                        # Execute dependency first
-                        dep_step = steps_dict[dep_id]
-                        context_variables["pending_step_id"] = step_id
-                        return _dispatch_to_agent(dep_step, context_variables, task_content, idea_content, step_results)
-
-                # If dependencies failed, skip this step
-                log_stage(workspace_dir, "experiment_execution", f"[✗] Step {step_id} skipped due to failed dependencies")
-                step_results[step_id] = {"status": "skipped", "output": f"Skipped due to failed dependencies: {unmet_deps}"}
-                context_variables["current_step_index"] = current_idx + 1
-                return step_dispatcher(output, context_variables)
-
-            # Dispatch to appropriate agent
-            return _dispatch_to_agent(step, context_variables, task_content, idea_content, step_results)
-
-        def _dispatch_to_agent(step: MethodStep, context_variables: ContextVariables, task: str, idea: str, step_results: dict) -> FunctionTargetResult:
-            """Dispatch step to RA or Engineer based on assignee"""
-
-            # Store step info in context for completion detection
-            context_variables["current_step_id"] = step.step_id
-            context_variables["current_step_description"] = step.description
-            context_variables["current_step_expected_output"] = step.expected_output
-            
-            step_dir = get_step_dir(step, exp_dir)
-            context_variables[f"step_dir_{step.step_id}"] = str(step_dir)
-            
-            files_before = _get_file_snapshot(step_dir)
-            context_variables[f"files_before_step_{step.step_id}"] = files_before
-            
-            step_code_executor = LocalCommandLineCodeExecutor(
-                timeout=timeout,
-                work_dir=str(step_dir),
-                virtual_env_context=virtual_env_context
-            )
-            context_variables["step_code_executor"] = step_code_executor
-
-            if step.assignee == "RA":
-                prompt = parse_method_step_to_prompt(step=step, step_results=step_results, exp_dir=exp_dir)
-                return FunctionTargetResult(
-                    target=AgentTarget(ra),
-                    messages=prompt,
-                    context_variables=context_variables
-                )
-            else:  # Engineer
-                prompt = parse_method_step_to_prompt(step=step, step_results=step_results, exp_dir=exp_dir)
-                return FunctionTargetResult(
-                    target=AgentTarget(engineer),
-                    messages=prompt,
-                    context_variables=context_variables
-                )
-
-        def process_step_result(output, context_variables: ContextVariables) -> FunctionTargetResult:
-            """Process step execution result and move to next step"""
-            current_idx = context_variables.get("current_step_index", 0)
-            exec_order = context_variables.get("execution_order", [])
-            step_results = context_variables.get("step_results", {})
-            #step_retries = context_variables.get("step_retries", {})
-
-            step_id = exec_order[current_idx]
-            step = steps_dict[step_id]
-
-            output_text = str(output)
-            
-            # Parse exit code from autogen's formatted string
-            # Format: "exitcode: {exit_code} ({status})\nCode output: {output}"
-            exit_code = None
-            execution_status = "unknown"
-
-            if execution_status == "success":
-                exit_info = f" (exit: {exit_code})" if exit_code is not None else ""
-                log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} code executed{exit_info}")
-
-                context_variables["last_execution_output"] = output_text
-                context_variables["last_execution_exit_code"] = exit_code if exit_code is not None else 0
-                
-                step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir))
-                log_file = step_dir / f"step_{step_id}_execution.log"
-                with open(log_file, 'w', encoding='utf-8') as f:
-                    f.write(output_text)
-                log_stage(workspace_dir, "experiment_execution", 
-                         f"[✓] Step {step_id} execution log saved to {log_file.relative_to(workspace_dir)}")
-
-                # Check if this is from CodeExecutor - if so, return to Engineer for review
-                if step.assignee == "Engineer":
-                    if context_variables["step_status"] == "check":
-                        return FunctionTargetResult(
-                            target=AgentTarget(engineer),
-                            messages=f"Experiment execution completed. Output:\n{output_text}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, continue working.",
-                            context_variables=context_variables
-                        )
-                elif step.assignee == "RA":
-                    # RA steps complete immediately after execution
-                    step_results[step_id] = {
-                        "step_id": step_id,
-                        "status": "success",
-                        "output": output_text,
-                        "exit_code": exit_code if exit_code is not None else 0,
-                        "execution_time": None  # LocalCommandLineCodeExecutor doesn't provide execution_time
-                    }
-                    context_variables["current_step_index"] = current_idx + 1
-                    context_variables["step_results"] = step_results
-                    return step_dispatcher(output, context_variables)
-            elif execution_status == "unknown":
-                log_stage(workspace_dir, "experiment_execution",
-                         f"[?] Step {step_id} received message (not code execution result): {output_text}")
-                if step.assignee == "RA":
-                    step_results[step_id] = {
-                        "step_id": step_id,
-                        "status": "success",
-                        "output": output_text,
-                        "exit_code": 0,
-                        "execution_time": None
-                    }
-                    context_variables["current_step_index"] = current_idx + 1
-                    context_variables["step_results"] = step_results
-                    return step_dispatcher(output, context_variables)
-                return FunctionTargetResult(
-                    target=AgentTarget(engineer),
-                    messages=output_text,
-                    context_variables=context_variables
-                )
-            else:
-                # Handle failure with retry
-                retry_count = step_retries.get(step_id, 0)
-                error_details = f"Step {step_id} failed"
-                if hasattr(output, 'exit_code'):
-                    error_details += f" (exit code: {output.exit_code})"
-                error_details += f" - Output: {output_text}"
-
-                if retry_count < max_retries:
-                    step_retries[step_id] = retry_count + 1
-                    context_variables["step_retries"] = step_retries
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[↻] Step {step_id} failed - retry {retry_count + 1}/{max_retries}: {error_details}")
-
-                    # On Engineer-assigned steps, hand off failures to the dedicated Code Debugger.
-                    if step.assignee == "Engineer":
-                        return FunctionTargetResult(
-                            target=AgentTarget(code_debugger),
-                            messages=CODE_DEBUG_PROMPT.format(step_id=step_id, output_text=output_text),
-                            context_variables=context_variables
-                        )
-                    else:
-                        return step_dispatcher(output, context_variables)
-                else:
-                    # Max retries reached, skip step
-                    log_stage(workspace_dir, "experiment_execution",
-                             f"[✗] Step {step_id} failed permanently - max retries reached: {error_details}")
-                    step_results[step_id] = {
-                        "step_id": step_id,
-                        "status": "failed",
-                        "output": output_text,
-                        "exit_code": getattr(output, 'exit_code', None),
-                        "retries": retry_count
-                    }
-                    context_variables["current_step_index"] = current_idx + 1
-                    context_variables["step_results"] = step_results
-
-            # Continue to next step
-            return step_dispatcher(output, context_variables)
-
-        def check_engineer_completion(output, context_variables: ContextVariables) -> FunctionTargetResult:
-            """Handle explicit step completion marked by the Engineer."""
-            current_idx = context_variables.get("current_step_index", 0)
-            exec_order = context_variables.get("execution_order", [])
-            step_results = context_variables.get("step_results", {})
-            step_id = exec_order[current_idx]
-
-            output_text = str(output)
-
-            # Check for STEP_COMPLETE marker only (code is handled elsewhere).
-            if "==STEP_COMPLETE==" not in output_text:
-                context_variables["step_status"] = "plan&execute"
-                return FunctionTargetResult(
-                    target=AgentTarget(engineer),
-                    messages=(
-                        f"No ==STEP_COMPLETE== marker found. Continue your work following the step {step_id}."
-                    ),
-                    context_variables=context_variables,
-                )
-            else:
-                context_variables["step_status"] = "complete"
-
-            log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} marked as complete by Engineer")
-
-            # Extract completion summary
-            import re
-
-            match = re.search(r'==========STEP_COMPLETE==========\s*\n*(.+?)(?:\n==|$)', output_text, re.DOTALL)
-            summary = match.group(1).strip() if match else "Step completed"
-
-            step_dir = Path(context_variables.get(f"step_dir_{step_id}", exp_dir))
-            files_before = context_variables.get(f"files_before_step_{step_id}", set())
-            files_after = _get_file_snapshot(step_dir)
-
-            new_files = files_after - files_before
-            detected_files = [str(f.relative_to(workspace_dir)) for f in new_files if f.is_file()]
-
-            try:
-                summary_path = step_dir / f"step_{step_id}_summary.md"
-                summary_path.write_text(summary, encoding="utf-8")
-            except Exception:
-                # Completion should not fail because of summary persistence issues.
-                pass
-
-            if detected_files:
-                log_stage(workspace_dir, "experiment_execution", f"[✓] Step {step_id} completed: {summary}, generated {len(detected_files)} files: {detected_files}")
-            else:
-                log_stage(workspace_dir, "experiment_execution", f"[!] Step {step_id} completed: {summary}, but no result files were detected")
-
-            step_results[step_id] = {
-                "step_id": step_id,
-                "status": "success",
-                "output": summary,
-                "files": detected_files,
-            }
-            context_variables["step_results"] = step_results
-            context_variables["current_step_index"] = current_idx + 1
-
-            # Move to next step in the execution graph.
-            context_variables["step_status"] = "plan&execute"
-            return step_dispatcher(output, context_variables)
-        
-        def handle_output(
-                output,
-                ctx: ContextVariables
-        ) -> FunctionTargetResult:
-            """
-            handle output from the agent in the current step.
-            """
-            current_step_idx = ctx.get("current_step_index", 0)
-            exec_order = ctx.get("execution_order", [])
-            step_results = ctx.get("step_results", {})
-
-            step_id = exec_order[current_step_idx]
-            step = steps_dict[step_id]
-            #print(f"ctx['step_status']: {ctx['step_status']}")
-            #print(f"step.assignee: {step.assignee}")
-
-            #print(f"step_status: {ctx['step_status']}")
-            if step.assignee.lower() == "engineer":
-                if ctx["step_status"] == "check":
-                    target = check_engineer_completion(output, ctx)
-                # For code-base experiments
-                elif ctx["step_status"] == "plan&execute":
-                    backend = ctx.get("backend")
-                    instruction = str(output)
-                    if backend == "autogen":
-                        # TODO
-                        results = autogen_codebase_experiment(
-                            instruction,
-                            # ctx.get("workspace_dir"),
-                            # ctx.get("experiment_name"),
-                            # ctx.get("backend")
-                        )
-                    elif backend == "opencode":
-                        results, session_id = opencode_codebase_experiment(
-                            instruction,
-                            workspace_dir=ctx.get("workspace_dir"),
-                            session_id=ctx.get("session_id"),
-                            # ctx.get("experiment_name"),
-                            # ctx.get("backend")
-                        )
-
-                        ctx["session_id"] = session_id 
-                        ctx["step_status"] = "check"
-                        if human_in_the_loop:
-                            target = FunctionTargetResult(
-                                target=AgentTarget(human),
-                                messages=f"Experiment execution completed. Results:\n{results}\n\nReview the results. Confirm that the results are true and accurate. If not, please provide feedback on what needs to be improved.",
-                                context_variables=ctx
-                            )
-                            return target
-                        # Check the results by human-in-the-loop
-
-
-                        # Ask engineer to check the experiment results
-                        messages = f"Experiment execution completed. Results:\n{results}\n\nReview the results. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, provide additional guidances to complete the step."
-                        target = FunctionTargetResult(
-                                target=AgentTarget(engineer),
-                                messages=messages,
-                                context_variables=ctx
-                            )
-                    else:
-                        # For wet experiments
-                        # TODO
-                        raise ValueError(f"Invalid backend: {backend}")
-
-            elif step.assignee == "RA":
-                output_text = str(output)
-                step_results[step_id] = {
-                    "step_id": step_id,
-                    "status": "completed",
-                    "output": output_text,
-                    "execution_time": None
-                }
-                ctx["current_step_index"] = current_step_idx + 1
-                ctx["step_results"] = step_results
-                return step_dispatcher(output, ctx)
-            return target
-
-        def human_to_agent(output, ctx: ContextVariables) -> FunctionTargetResult:
-            messages = f"Review to the experiment results and the feedback from the human. If the step goal is achieved, provide your summary and end with '==STEP_COMPLETE=='. Otherwise, provide additional guidances to complete the step."
-            target = FunctionTargetResult(
-                        target=AgentTarget(engineer),
-                        messages=messages,
-                        context_variables=ctx
-                    )
-            return target
-
-
-
-        initial_context = ContextVariables(data={
-            "current_step_index": 0,
-            "execution_order": execution_order,
-            "steps": [step.model_dump() for step in steps],
-            "step_results": {},
-            "step_retries": {},
-            "step_status": "plan&execute", #plan&execute -> check -> plan&execute / complete]
-            "backend": backend,
-            "max_retries": max_retries,
-            "exp_dir": str(exp_dir)
-        })
         if backend == "opencode":
-            initial_context.update({"session_id": None}) # session_id for current step
-
-
-        # Register handoffs for multi-round workflow
-        # RA: simple flow - execute and complete
-        ra.handoffs.set_after_work(FunctionTarget(handle_output))
-        engineer.handoffs.set_after_work(
-            FunctionTarget(lambda output, context_variables:
-                           handle_output(output, context_variables))
-        )
-        if human_in_the_loop:
-            human.handoffs.set_after_work(FunctionTarget(human_to_agent))
-        # code_debugger.handoffs.set_after_work(
-        #     FunctionTarget(lambda output, context_variables:
-        #                    _handle_code_response(output, context_variables, allow_step_completion=False))
-        # )
-        analyst.handoffs.set_after_work(TerminateTarget())
-
-        if human_in_the_loop:
-            pattern = DefaultPattern(
-                initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
-                agents=[ra, engineer, analyst, human],
-                user_agent=human,
-                context_variables=initial_context,
-                group_manager_args={"llm_config": llm_config}
+            results, session_id = opencode_codebase_experiment(
+                instruction,
+                workspace_dir=ctx["experiment_dir"] / f"step_{ctx["current_step_id"]}",
+                env_path=ctx["env_path"],
+                session_id=ctx["session_id"],
             )
-        else:
-            pattern = DefaultPattern(
-                initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
-                agents=[ra, engineer, analyst],
-                #user_agent=engineer,
-                context_variables=initial_context,
-                group_manager_args={"llm_config": llm_config}
+            ctx["session_id"] = session_id
+            #print(f"Session ID: {session_id}, returned")
+            return results
+        
+        raise ValueError(f"Unsupported backend: {backend}")
+
+    # ===============================
+    # ENGINEER HANDLER
+    # ===============================
+
+    def handle_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:
+        step_id = ctx["current_step_id"]
+        status = ctx["step_status"]
+
+        # ---- PLAN → EXECUTE ----
+        if status == "plan":
+            results = execute_backend(str(output), ctx)
+            ctx["last_execution_output"] = results
+            ctx["step_status"] = "check"
+
+            return FunctionTargetResult(
+                target=AgentTarget(engineer),
+                messages=(
+                    f"Execution Results:\n{results}\n\n"
+                    "Check the results. If the step is completed, make a conclusion ending with '==STEP_COMPLETE=='."
+                ),
+                context_variables=ctx,
             )
 
-        # Construct the inital messages
-        # 1. Research Context
-        context_prompt = EXPERIMENT_EXECUTION_CONTEXT_PROMPT.format(
-            task=task_content,
-            idea=extract_selected_idea(idea_content),
-        )
-        #context_messages = TextMessage(content=context_prompt, source="user")
-        # 2. Step1 Prompt
-        first_step = steps_dict[execution_order[0]]
-        first_step_prompt = parse_method_step_to_prompt(first_step, step_results={}, exp_dir=exp_dir)
-        #first_step_messages = TextMessage(content=first_step_prompt, source="user")
+        # ---- CHECK COMPLETION ----
+        if status == "check":
+            text = str(output)
 
-        initial_messages = [
-            {"role": "user", "content": context_prompt},
-            {"role": "user", "content": first_step_prompt}
-        ]
-        #print(initial_messages)
+            if "==STEP_COMPLETE==" in text:
+                ctx["step_results"][step_id] = {
+                    "status": "success",
+                    "output": text,
+                }
+                ctx["current_index"] += 1
+                ctx["step_status"] = "done"
+                return dispatch_next_step(ctx)
 
-        log_stage(workspace_dir, "experiment_execution", "Starting step-by-step execution")
+            # retry
+            ctx["retry_count"] += 1
 
-        result, context, last_agent = initiate_group_chat(
-            pattern=pattern,
-            messages=initial_messages,
-            max_rounds=len(execution_order) * (max_retries + 2) + 5
-        )
+            if ctx["retry_count"] >= ctx["max_retries"]:
+                ctx["step_results"][step_id] = {
+                    "status": "failed",
+                    "output": text,
+                }
+                ctx["current_index"] += 1
+                return dispatch_next_step(ctx)
 
-        # Extract analysis from analyst messages (no minimum length requirement).
-        analyst_messages = [
-            msg.get("content")
-            for msg in result.chat_history
-            if msg.get("name") == analyst.name and msg.get("content")
-        ]
+            # re-plan
+            ctx["step_status"] = "plan"
 
-        analysis = analyst_messages[-1] if analyst_messages else None
+            return FunctionTargetResult(
+                target=AgentTarget(engineer),
+                messages="Refine your instruction and try again.",
+                context_variables=ctx,
+            )
 
-        if not analysis:
-            error_msg = "[✕] No analysis message found from analyst agent."
-            log_stage(workspace_dir, "experiment_execution", error_msg)
-            raise WorkflowError("[✕]Analyst analysis is required but not found. Check agent execution flow.")
+        raise RuntimeError("Invalid step_status")
 
-        all_result_files = []
-        for step_id in execution_order:
-            step_result = context.get("step_results", {}).get(step_id, {})
-            step_files = step_result.get("files", [])
-            all_result_files.extend([Path(workspace_dir / f) for f in step_files if Path(workspace_dir / f).exists()])
-        
-        all_result_files = list(set(all_result_files))
-        
-        figure_extensions = {'.png', '.jpg', '.jpeg', '.svg', '.pdf', '.gif', '.bmp', '.tiff'}
-        data_files = [p for p in all_result_files if p.suffix.lower() not in figure_extensions]
-        figure_files = [p for p in all_result_files if p.suffix.lower() in figure_extensions]
-        
-        log_stage(workspace_dir, "experiment_execution",
-                 f"Final file collection: {len(data_files)} data files, {len(figure_files)} figure files")
+    # ===============================
+    # RA HANDLER
+    # ===============================
 
-        save_agent_history(
-            workspace_dir=workspace_dir,
-            node_name="experiment_execution",
-            messages=result.chat_history,
-            agent_chat_messages={
-                ra.name: ra.chat_messages,
-                engineer.name: engineer.chat_messages,
-                #code_debugger.name: code_debugger.chat_messages,
-                analyst.name: analyst.chat_messages,
-            }
-        )
+    def handle_ra(output, ctx: ContextVariables) -> FunctionTargetResult:
+        step_id = ctx["current_step_id"]
 
-        exp_result = ExperimentResult(
-            summary=analysis,
-            data_paths=[str(p.relative_to(workspace_dir)) for p in data_files],
-            figure_paths=[str(p.relative_to(workspace_dir)) for p in figure_files],
-            metrics=context.get("metrics", {})
-        )
-
-        results_path = get_artifact_path(workspace_dir, "results")
-        save_markdown(exp_result.to_markdown(), results_path)
-
-        log_stage(workspace_dir, "experiment_execution", f"Completed. Generated {len(data_files)} data files, {len(figure_files)} figure files")
-
-        update_state = {
-            "results": exp_result,
-            "stage": "experiment_execution"
+        ctx["step_results"][step_id] = {
+            "status": "success",
+            "output": str(output),
         }
-        # router
-        if state["config"]["researcher"]["workflow"] == "default":
-            update_state["next_node"] = "report_generation"
-        return update_state
 
-    except Exception as e:
-        log_stage(workspace_dir, "experiment_execution", f"Error: {str(e)}")
-        raise WorkflowError(f"Experiment execution failed: {str(e)}")
+        ctx["current_index"] += 1
+        return dispatch_next_step(ctx)
 
+    # ===============================
+    # AGENT ROUTER
+    # ===============================
+
+    def route_output(output, ctx: ContextVariables):
+        step_id = ctx.get("current_step_id")
+        step = steps_dict.get(step_id)
+
+        if not step:
+            return FunctionTargetResult(
+                target=TerminateTarget(),
+                messages=None,
+                context_variables=ctx,
+            )
+
+        if step.assignee.lower() == "engineer":
+            target = handle_engineer(output, ctx)
+
+        elif step.assignee == "RA":
+            target = handle_ra(output, ctx)
+        return target
+
+    # Register handoffs
+    ra.handoffs.set_after_work(FunctionTarget(lambda output, context_variables: 
+                                              route_output(output, context_variables)))
+    engineer.handoffs.set_after_work(FunctionTarget(lambda output, context_variables: 
+                                              route_output(output, context_variables)))
+    analyst.handoffs.set_after_work(TerminateTarget())
+
+    # ===============================
+    # PATTERN
+    # ===============================
+
+    pattern = DefaultPattern(
+        initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
+        agents=[ra, engineer, analyst],
+        context_variables=ctx,
+        group_manager_args={"llm_config": llm_config},
+    )
+
+
+    # Construct the inital messages
+    # 1. Research Context
+    context_prompt = EXPERIMENT_EXECUTION_CONTEXT_PROMPT.format(
+        task=task_content,
+        idea=extract_selected_idea(idea_content),
+    )
+    #context_messages = TextMessage(content=context_prompt, source="user")
+    # 2. Step1 Prompt
+    first_step = steps_dict[execution_order[0]]
+    first_step_prompt = parse_method_step_to_prompt(first_step, step_results={}, exp_dir=exp_dir)
+    #first_step_messages = TextMessage(content=first_step_prompt, source="user")
+
+    initial_messages = [
+        {"role": "user", "content": context_prompt},
+        {"role": "user", "content": first_step_prompt}
+    ]
+    result, context, _ = initiate_group_chat(
+        pattern=pattern,
+        messages=initial_messages,
+        max_rounds=len(execution_order) * (max_retries + 2) + 5,
+    )
+
+    # Extract analysis from analyst messages (no minimum length requirement).
+    analyst_messages = [
+        msg.get("content")
+        for msg in result.chat_history
+        if msg.get("content")
+    ]
+
+    analysis = analyst_messages[-1] if analyst_messages else None
+
+    # if not analysis:
+    #     error_msg = "[✕] No analysis message found from analyst agent."
+    #     log_stage(workspace_dir, "experiment_execution", error_msg)
+    #     raise WorkflowError("[✕]Analyst analysis is required but not found. Check agent execution flow.")
+
+    all_result_files = []
+    for step_id in execution_order:
+        step_result = context.get("step_results", {}).get(step_id, {})
+        step_files = step_result.get("files", [])
+        all_result_files.extend([Path(workspace_dir / f) for f in step_files if Path(workspace_dir / f).exists()])
+    
+    all_result_files = list(set(all_result_files))
+    
+    figure_extensions = {'.png', '.jpg', '.jpeg', '.svg', '.pdf', '.gif', '.bmp', '.tiff'}
+    data_files = [p for p in all_result_files if p.suffix.lower() not in figure_extensions]
+    figure_files = [p for p in all_result_files if p.suffix.lower() in figure_extensions]
+    
+    log_stage(workspace_dir, "experiment_execution",
+                f"Final file collection: {len(data_files)} data files, {len(figure_files)} figure files")
+
+    save_agent_history(
+        workspace_dir=workspace_dir,
+        node_name="experiment_execution",
+        messages=result.chat_history,
+        agent_chat_messages={
+            ra.name: ra.chat_messages,
+            engineer.name: engineer.chat_messages,
+            #code_debugger.name: code_debugger.chat_messages,
+            analyst.name: analyst.chat_messages,
+        }
+    )
+
+    exp_result = ExperimentResult(
+        summary=analysis,
+        data_paths=[str(p.relative_to(workspace_dir)) for p in data_files],
+        figure_paths=[str(p.relative_to(workspace_dir)) for p in figure_files],
+        metrics=context.get("metrics", {})
+    )
+
+    results_path = get_artifact_path(workspace_dir, "results")
+    save_markdown(exp_result.to_markdown(), results_path)
+
+    log_stage(workspace_dir, "experiment_execution", f"Completed. Generated {len(data_files)} data files, {len(figure_files)} figure files")
+
+    update_state = {
+        "results": exp_result,
+        "stage": "experiment_execution"
+    }
+    # router
+    if state["config"]["researcher"]["workflow"] == "default":
+        update_state["next_node"] = "report_generation"
+    return update_state
 # utils
 
 def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: Path) -> str:
@@ -675,12 +373,14 @@ def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: P
         )
     else:  # Engineer
         timestamp = exp_dir.name.replace("code_", "")
+        step_dir = exp_dir / f"step_{step.step_id}"
         prompt = ENGINEER_STEP_GUIDANCE_SHORT_PROMPT.format(
             step_id=step.step_id,
             description=step.description,
             expected_output=step.expected_output,
             available_files=files_str,
             context=context_str,
+            step_dir=step_dir,
             timestamp=timestamp
         )
     return prompt

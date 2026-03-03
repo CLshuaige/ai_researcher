@@ -605,6 +605,12 @@ ENGINEER_STEP_GUIDANCE_SHORT_PROMPT = """You are generating concise engineering 
 ## Expected Deliverable
 {expected_output}
 
+## Available Files
+{available_files}
+
+## Context
+{context}
+
 ## Guidance Requirements
 - Output MUST be short and implementation-oriented.
 - The entire step should be achievable with **one or two code files only**.
@@ -613,6 +619,7 @@ ENGINEER_STEP_GUIDANCE_SHORT_PROMPT = """You are generating concise engineering 
 - Do NOT explain background, theory, or future steps.
 - Do NOT include execution instructions or validation steps.
 - Do NOT mention planning or meta-commentary.
+- The files should be placed in {step_dir}
 
 ## Output Format
 Produce a brief guidance (3-6 bullet points max) that directly tells the engineer what code to write to complete this step.
