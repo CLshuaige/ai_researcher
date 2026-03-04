@@ -73,15 +73,19 @@ log "Port $PORT is clean."
 ############################
 log "Starting vLLM serve..."
 
-export NCCL_IB_DISABLE=1
-export NCCL_SOCKET_IFNAME=ens1f0
-export NCCL_P2P_DISABLE=1
-export NCCL_SHM_DISABLE=0
-export NCCL_NET_GDR_LEVEL=0
+# export NCCL_IB_DISABLE=1
+# export NCCL_SOCKET_IFNAME=ens1f0
+# export NCCL_P2P_DISABLE=1
+# export NCCL_SHM_DISABLE=0
+# export NCCL_NET_GDR_LEVEL=0
 # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# 激活 vLLM 环境并启动服务
-exec conda run -n vllm-coder vllm serve \
+# export NCCL_DEBUG=WARN
+# export NCCL_DEBUG_FILE=./nccl_debug.log
+
+unset LD_LIBRARY_PATH
+# export CUDA_VISIBLE_DEVICES=4,5,6,7
+exec conda run -n vllm /home/ai_researcher/miniconda3/envs/vllm/bin/vllm serve \
   "$MODEL_PATH" \
   --port "$PORT" \
   --host 0.0.0.0 \

@@ -185,7 +185,10 @@ def serialize_groupchat_messages(agent_chat_messages) -> dict:
     result = {}
 
     for manager, messages in agent_chat_messages.items():
-        manager_name = getattr(manager, "name", "GroupChatManager")
+        if isinstance(manager, str) and manager.strip():
+            manager_name = manager
+        else:
+            manager_name = getattr(manager, "name", None) or "GroupChatManager"
 
         # 关键修复点：messages 不是 list，而是 dict
         flattened_messages = []

@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import re
 
@@ -30,6 +30,8 @@ from researcher.utils import (
     get_default_config_path,
     save_agent_history,
     deduplicate_long_repeats,
+    save_json,
+    load_json,
 )
 from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
@@ -50,6 +52,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     max_retries = config["code_execution_retries"]
     human_in_the_loop = config["human_in_the_loop"]
     env_path = Path(config["virtual_env_path"])
+    start_step = int(config.get("start_step", 1) or 1)
+    resume_experiment_dir = config.get("resume_experiment_dir")
 
     task_content = load_artifact_from_file(workspace_dir, "task")
     idea_content = load_artifact_from_file(workspace_dir, "idea")
@@ -60,10 +64,25 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
     llm_config = get_llm_config()
 
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_dir = workspace_dir / "experiments" / f"exp_{timestamp}"
+    exp_dir, resumed = _select_experiment_dir(
+        workspace_dir=workspace_dir,
+        start_step=start_step,
+        resume_experiment_dir=resume_experiment_dir,
+    )
     exp_dir.mkdir(parents=True, exist_ok=True)
+    log_stage(
+        workspace_dir,
+        "experiment_execution",
+        f"Using experiment dir: {exp_dir} (resumed={resumed}, start_step={start_step})",
+    )
+
+    # Load step records for resume
+    step_records = _load_step_records(exp_dir)
+    step_results = _build_step_results_from_records(
+        step_records=step_records,
+        execution_order=execution_order,
+        start_step=start_step,
+    )
 
     # Agents
     ra = RAAgent().create_agent(llm_config)
@@ -79,15 +98,16 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
     ctx = ContextVariables(data={
         "execution_order": execution_order,
-        "current_index": 0,
-        "current_step_id": 1, # start from step1
-        "step_results": {},
+        "current_index": _get_start_index(execution_order, start_step),
+        "current_step_id": start_step, # start from specified step
+        "step_results": step_results,
         "step_status": "plan",   # plan → check → done
         "backend": backend,
         "retry_count": 0,
         "max_retries": max_retries,
         "workspace_dir": workspace_dir,
         "experiment_dir": exp_dir,
+        "step_records_dir": exp_dir / "steps",
         "env_path": env_path,
         "session_id": None,
     })
@@ -112,6 +132,9 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         ctx["current_step_id"] = step_id
         ctx["step_status"] = "plan"
         ctx["retry_count"] = 0
+        step_dir = get_step_dir(step, ctx["experiment_dir"])
+        ctx["step_dir"] = step_dir
+        ctx["step_file_snapshot"] = _get_file_snapshot(step_dir)
 
         prompt = parse_method_step_to_prompt(
             step=step,
@@ -154,6 +177,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     def handle_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:
         step_id = ctx["current_step_id"]
         status = ctx["step_status"]
+        step = steps_dict[step_id]
 
         # ---- PLAN → EXECUTE ----
         if status == "plan":
@@ -175,10 +199,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             text = str(output)
 
             if "==STEP_COMPLETE==" in text:
+                summary = _extract_step_summary(text)
+                files = _collect_step_files(ctx)
                 ctx["step_results"][step_id] = {
                     "status": "success",
-                    "output": text,
+                    "output": summary,
+                    "files": files,
                 }
+                _save_step_record(ctx, step_id, step, status="success", summary=summary, output=text, files=files)
                 ctx["current_index"] += 1
                 ctx["step_status"] = "done"
                 return dispatch_next_step(ctx)
@@ -187,10 +215,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             ctx["retry_count"] += 1
 
             if ctx["retry_count"] >= ctx["max_retries"]:
+                summary = _extract_step_summary(text)
+                files = _collect_step_files(ctx)
                 ctx["step_results"][step_id] = {
                     "status": "failed",
-                    "output": text,
+                    "output": summary,
+                    "files": files,
                 }
+                _save_step_record(ctx, step_id, step, status="failed", summary=summary, output=text, files=files)
                 ctx["current_index"] += 1
                 return dispatch_next_step(ctx)
 
@@ -211,11 +243,16 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
     def handle_ra(output, ctx: ContextVariables) -> FunctionTargetResult:
         step_id = ctx["current_step_id"]
+        step = steps_dict[step_id]
+        summary = str(output)
+        files = _collect_step_files(ctx)
 
         ctx["step_results"][step_id] = {
             "status": "success",
-            "output": str(output),
+            "output": summary,
+            "files": files,
         }
+        _save_step_record(ctx, step_id, step, status="success", summary=summary, output=summary, files=files)
 
         ctx["current_index"] += 1
         return dispatch_next_step(ctx)
@@ -254,7 +291,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     # ===============================
 
     pattern = DefaultPattern(
-        initial_agent=ra if steps_dict[execution_order[0]].assignee == "RA" else engineer,
+        initial_agent=ra if steps_dict[execution_order[ctx["current_index"]]].assignee == "RA" else engineer,
         agents=[ra, engineer, analyst],
         context_variables=ctx,
         group_manager_args={"llm_config": llm_config},
@@ -268,14 +305,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         idea=extract_selected_idea(idea_content),
     )
     #context_messages = TextMessage(content=context_prompt, source="user")
-    # 2. Step1 Prompt
-    first_step = steps_dict[execution_order[0]]
-    first_step_prompt = parse_method_step_to_prompt(first_step, step_results={}, exp_dir=exp_dir)
+    # 2. First Step Prompt
+    first_step = steps_dict[execution_order[ctx["current_index"]]]
+    first_step_prompt = parse_method_step_to_prompt(first_step, step_results=ctx["step_results"], exp_dir=exp_dir)
     #first_step_messages = TextMessage(content=first_step_prompt, source="user")
 
     initial_messages = [
-        {"role": "user", "content": context_prompt},
-        {"role": "user", "content": first_step_prompt}
+        {"role": "user", "content": context_prompt + first_step_prompt},
+        #{"role": "user", "content": first_step_prompt}
     ]
     result, context, _ = initiate_group_chat(
         pattern=pattern,
@@ -488,8 +525,8 @@ def sanitize_dir_name(name: str) -> str:
     return name[:50].strip('_').lower() or 'step'
 
 def get_step_dir(step: MethodStep, exp_dir: Path) -> Path:
-    """Get unified experiment directory for all steps"""
-    step_dir = exp_dir
+    """Get per-step experiment directory"""
+    step_dir = exp_dir / f"step_{step.step_id}"
     step_dir.mkdir(parents=True, exist_ok=True)
     try:
         import json
@@ -515,3 +552,127 @@ def _get_file_snapshot(step_dir: Path) -> set:
         return set()
     all_files = set(step_dir.rglob("*"))
     return {f for f in all_files if f.is_file()}
+
+
+def _select_experiment_dir(workspace_dir: Path, start_step: int, resume_experiment_dir: Optional[str]) -> tuple[Path, bool]:
+    exp_root = workspace_dir / "experiments"
+    exp_root.mkdir(parents=True, exist_ok=True)
+
+    if resume_experiment_dir:
+        p = Path(resume_experiment_dir)
+        if not p.is_absolute():
+            p = workspace_dir / resume_experiment_dir
+        if p.exists():
+            return p, True
+
+    if start_step > 1:
+        candidates = [d for d in exp_root.iterdir() if d.is_dir() and d.name.startswith("exp_")]
+        candidates.sort()
+        if candidates:
+            return candidates[-1], True
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return exp_root / f"exp_{timestamp}", False
+
+
+def _load_step_records(exp_dir: Path) -> dict:
+    records_dir = exp_dir / "steps"
+    if not records_dir.exists():
+        return {}
+    records = {}
+    for path in records_dir.glob("step_*.json"):
+        data = load_json(path)
+        if not data:
+            continue
+        step_id = data.get("step_id")
+        if isinstance(step_id, int):
+            records[step_id] = data
+    return records
+
+
+def _build_step_results_from_records(step_records: dict, execution_order: List[int], start_step: int) -> dict:
+    if not step_records:
+        return {}
+    allowed = set()
+    for sid in execution_order:
+        if sid < start_step:
+            allowed.add(sid)
+    results = {}
+    for sid, record in step_records.items():
+        if sid not in allowed:
+            continue
+        summary = record.get("summary") or record.get("output") or ""
+        results[sid] = {
+            "status": record.get("status", "unknown"),
+            "output": summary,
+            "files": record.get("files", []),
+        }
+    return results
+
+
+def _get_start_index(execution_order: List[int], start_step: int) -> int:
+    try:
+        return execution_order.index(start_step)
+    except ValueError:
+        return 0
+
+
+def _extract_step_summary(text: str) -> str:
+    if "==STEP_COMPLETE==" not in text:
+        return text.strip()
+    # Remove completion marker and anything after it
+    parts = text.split("==STEP_COMPLETE==", 1)
+    summary = parts[0].strip()
+    return summary or "Step completed"
+
+
+def _collect_step_files(ctx: ContextVariables) -> list[str]:
+    step_dir = ctx.get("step_dir")
+    workspace_dir = ctx.get("workspace_dir")
+    if not step_dir or not workspace_dir:
+        return []
+    before = ctx.get("step_file_snapshot") or set()
+    after = _get_file_snapshot(step_dir)
+    new_files = sorted(after - before)
+    if not new_files:
+        new_files = sorted(after)
+    rel_files = []
+    for p in new_files:
+        try:
+            rel_files.append(str(p.relative_to(workspace_dir)))
+        except Exception:
+            rel_files.append(str(p))
+    return rel_files
+
+
+def _save_step_record(
+    ctx: ContextVariables,
+    step_id: int,
+    step: MethodStep,
+    status: str,
+    summary: str,
+    output: str,
+    files: list[str],
+) -> None:
+    records_dir = ctx.get("step_records_dir")
+    if not records_dir:
+        return
+    try:
+        from datetime import datetime
+        record = {
+            "step_id": step_id,
+            "status": status,
+            "summary": summary,
+            "output": output,
+            "files": files,
+            "assignee": step.assignee,
+            "dependencies": step.dependencies,
+            "expected_output": step.expected_output,
+            "step_dir": str(ctx.get("step_dir", "")),
+            "completed_at": datetime.now().isoformat(),
+        }
+        save_json(record, Path(records_dir) / f"step_{step_id}.json")
+    except Exception:
+        # Best-effort only
+        pass
