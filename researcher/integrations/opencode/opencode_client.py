@@ -29,8 +29,8 @@ class OpenCodeClient:
         self.client = Opencode(base_url=base_url, timeout=timeout)
         self.session_id: Optional[str] = None
         self._work_dir: Optional[Path] = None
-        self._provider_id = provider_id or "qwen-local"
-        self._model_id = model_id or "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+        self._provider_id = provider_id
+        self._model_id = model_id
         _ = config_file
 
     def create_session(self, work_dir: Path) -> str:

@@ -40,6 +40,10 @@ researcher:
   experiment_execution:
     mode: "basic"
     backend: "opencode"
+    opencode:
+      model_selector: "qwen-local//home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct" # from configs/opencode.json (provider_id/model_id)
+      # model_selector: "openai-free/gpt-5.3-codex"
+      # base_url: "http://127.0.0.1:4096"
     human_in_the_loop: true
     code_execution_timeout: 300  # seconds
     code_execution_retries: 5

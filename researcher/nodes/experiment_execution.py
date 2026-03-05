@@ -43,7 +43,12 @@ from researcher.prompts.templates import (
 )
 from researcher.exceptions import WorkflowError
 
-from researcher.integrations.opencode import opencode_codebase_experiment
+from researcher.integrations.opencode import (
+    get_opencode_server_url,
+    list_opencode_model_selectors,
+    opencode_codebase_experiment,
+    resolve_opencode_model_selector,
+)
 
 def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
@@ -54,6 +59,17 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     env_path = Path(config["virtual_env_path"])
     start_step = int(config.get("start_step", 1) or 1)
     resume_experiment_dir = config.get("resume_experiment_dir")
+    opencode_runtime = {}
+
+    if backend == "opencode":
+        opencode_config = config.get("opencode") or {}
+        model_selector = opencode_config.get("model_selector")
+        provider_id, model_id = resolve_opencode_model_selector(model_selector)
+        opencode_runtime = {
+            "base_url": opencode_config.get("base_url") or get_opencode_server_url(),
+            "provider_id": provider_id,
+            "model_id": model_id,
+        }
 
     task_content = load_artifact_from_file(workspace_dir, "task")
     idea_content = load_artifact_from_file(workspace_dir, "idea")
@@ -110,6 +126,9 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         "step_records_dir": exp_dir / "steps",
         "env_path": env_path,
         "session_id": None,
+        "opencode_base_url": opencode_runtime.get("base_url"),
+        "opencode_provider_id": opencode_runtime.get("provider_id"),
+        "opencode_model_id": opencode_runtime.get("model_id"),
     })
 
     # ===============================
@@ -163,6 +182,9 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 workspace_dir=ctx["experiment_dir"] / f"step_{ctx["current_step_id"]}",
                 env_path=ctx["env_path"],
                 session_id=ctx["session_id"],
+                opencode_base_url=ctx["opencode_base_url"],
+                provider_id=ctx["opencode_provider_id"],
+                model_id=ctx["opencode_model_id"],
             )
             ctx["session_id"] = session_id
             #print(f"Session ID: {session_id}, returned")
@@ -189,7 +211,20 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 target=AgentTarget(engineer),
                 messages=(
                     f"Execution Results:\n{results}\n\n"
-                    "Check the results. If the step is completed, make a conclusion ending with '==STEP_COMPLETE=='."
+                    "Perform a strict completion check before deciding this step is done.\n"
+                    "Do not mark completion for partial progress, demo-only output, smoke-test-only output, empty/placeholder results, "
+                    "or results that do not satisfy the step objective.\n\n"
+                    "Only output '==STEP_COMPLETE==' if ALL of the following are true:\n"
+                    "1) The required deliverable/result for this step is produced.\n"
+                    "2) The result is correct (not just runnable) and matches the intended objective.\n"
+                    "3) There is concrete evidence from execution/artifacts supporting correctness.\n"
+                    "4) No blocking errors remain.\n\n"
+                    "Your response must include:\n"
+                    "- Completion decision: COMPLETE or INCOMPLETE\n"
+                    "- Evidence: key outputs/files/metrics proving correctness\n"
+                    "- Gap analysis: what is still missing or incorrect (if any)\n"
+                    "- Next action: exact fix/verification to run next (if INCOMPLETE)\n\n"
+                    "Append '==STEP_COMPLETE==' ONLY when the decision is COMPLETE."
                 ),
                 context_variables=ctx,
             )
@@ -231,7 +266,10 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
             return FunctionTargetResult(
                 target=AgentTarget(engineer),
-                messages="Refine your instruction and try again.",
+                messages=(
+                    "Step is still incomplete. Refine the instruction with a concrete fix plan and rerun.\n"
+                    "Do not claim completion until missing requirements are fully satisfied with verifiable evidence."
+                ),
                 context_variables=ctx,
             )
 

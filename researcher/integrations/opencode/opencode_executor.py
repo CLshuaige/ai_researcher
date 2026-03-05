@@ -1,10 +1,3 @@
-"""
-OpenCode executor. Usage:
-
-  from researcher.integrations.opencode import opencode_codebase_experiment
-  result = await opencode_codebase_experiment("instruction", workspace_dir)  # -> {text, parts, id, session_id, role, time, parent_id, model_id, provider_id, mode, agent, path, cost, tokens, finish, raw}
-"""
-
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -18,11 +11,18 @@ except ImportError as e:
     raise ImportError(f"OpenCode client import failed: {e}")
 
 
-OPENCODE_NOTE = """## Workflow
+OPENCODE_NOTE = """## Instructions
+- It is prohibited to fabricate or occupy various data, processes or results.
+- It is more important to strictly follow the experimental constraints and carry out each step meticulously to obtain the results, rather than simply completing the process.
 - After writing or changing code, run it automatically. Use the run result to decide whether to fix or extend the program; repeat until the instruction is fully satisfied.
 - Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step.
 - Use the conda environment "{env_path}" to run the code.
-- Put all the files in the directory "{exp_dir}" for this step.
+- Focus only on this experiment scope. Current step working directory: "{exp_dir}". Put all new files for this step in it.
+- Cross-step continuity is allowed only inside this same experiment root: "{exp_root}" (for example, sibling step directories under the same root).
+- Do not read, reference, or copy files from other timestamped project directories outside "{exp_root}", even if their tasks look similar.
+- Execute this experiment step to completion and produce the required step result; do not stop at a partial proof-of-concept.
+- Avoid ending with demo scripts, toy examples, or smoke tests as final output for the step.
+- In general, do not write demo code unless the instruction explicitly asks for a demo.
 """
 
 
@@ -56,8 +56,13 @@ class OpenCodeExecutor:
         env_path: Path,
         session_id: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
-        # Prepend debugging guidance to instruction
-        full_instruction = OPENCODE_NOTE.format(exp_dir=workspace_dir, env_path=env_path) + "\n\n" + instruction
+
+        exp_root = workspace_dir.parent if workspace_dir.name.startswith("step_") else workspace_dir
+        full_instruction = OPENCODE_NOTE.format(
+            exp_dir=workspace_dir,
+            exp_root=exp_root,
+            env_path=env_path,
+        ) + "\n\n" + instruction
 
         with OpenCodeClient(
             base_url=self.opencode_base_url,
@@ -87,28 +92,29 @@ class OpenCodeExecutor:
         return text_response
 
 
-_default_executor: Optional[OpenCodeExecutor] = None
-
-
-def _get_default_executor() -> OpenCodeExecutor:
-    global _default_executor
-    if _default_executor is None:
-        _default_executor = OpenCodeExecutor()
-    return _default_executor
-
-
 def opencode_codebase_experiment(
     instruction: str,
     workspace_dir: Path,
     env_path: Path,
     session_id: Optional[str] = None,
+    *,
+    opencode_base_url: str = "http://localhost:4096",
+    timeout: float = 300.0,
+    config_file: Optional[Path] = None,
+    provider_id: Optional[str] = None,
+    model_id: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
-    text_response, session_id = _get_default_executor().execute_instruction(
+    executor = OpenCodeExecutor(
+        opencode_base_url=opencode_base_url,
+        timeout=timeout,
+        config_file=config_file,
+        provider_id=provider_id,
+        model_id=model_id,
+    )
+    text_response, session_id = executor.execute_instruction(
         instruction, workspace_dir, env_path, session_id=session_id
     )
 
-    # Parse
-    # TODO
     exp_results = text_response
 
     return exp_results, session_id
@@ -118,8 +124,8 @@ def opencode_codebase_experiment(
 if __name__ == "__main__":
     def _main():
         return opencode_codebase_experiment(
-            # "Write a simple Python script that prints 'Hello, OpenCode!'",
-            "再加一句Byebye",
+            "Write a simple Python script that prints 'Hello, OpenCode!'",
+            Path("."),
             Path("."),
             session_id="ses_3d31674e3ffeI5MekbM50tgEfZ"
         )
