@@ -23,6 +23,7 @@ workspace:
 # Researcher Settings
 researcher:
   workflow: "default"
+  iterbale: true
   
   task_parsing:
     mode: "basic"

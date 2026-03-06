@@ -30,6 +30,8 @@ from researcher.utils import (
     save_agent_history,
 )
 from researcher.exceptions import WorkflowError
+# app
+from researcher.api.app import app
 
 
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
@@ -118,39 +120,41 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         
         max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
         
+        if state["config"]["researcher"]["iterable"]:
+            iterator = run_group_chat_iter(
+                pattern=pattern,
+                messages=prompt,
+                max_rounds=max_rounds,
+                yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent]
+            )
 
-        # result, context, last_agent = initiate_group_chat(
-        #     pattern=pattern,
-        #     messages=prompt,
-        #     max_rounds=max_rounds
-        # )
-        iterator = run_group_chat_iter(
-            pattern=pattern,
-            messages=prompt,
-            max_rounds=max_rounds,
-            yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent]
-        )
-
-        global_history = []
-        for event in iterator:
-            if isinstance(event, GroupChatRunChatEvent):
-                print(f"\n=== {event.content.speaker}'s turn ===")
-            elif isinstance(event, TextEvent):
-                print(f"{event.content.content}")
-                global_history.append({
-                    "name": event.content.sender,
-                    "content": event.content.content
-                })
-            elif isinstance(event, InputRequestEvent):
-                user_input = input(event.content.prompt)
-                event.content.respond(user_input)
-            # elif isinstance(event, TerminationEvent):
-            #     continue
-            elif isinstance(event, RunCompletionEvent):
-                result_history = event.content.history
-                summary = event.content.summary
-                context_vars = event.content.context_variables
-                last_speaker = event.content.last_speaker
+            global_history = []
+            for event in iterator:
+                if isinstance(event, GroupChatRunChatEvent):
+                    print(f"\n=== {event.content.speaker}'s turn ===")
+                elif isinstance(event, TextEvent):
+                    print(f"{event.content.content}")
+                    global_history.append({
+                        "name": event.content.sender,
+                        "content": event.content.content
+                    })
+                elif isinstance(event, InputRequestEvent):
+                    user_input = input(event.content.prompt)
+                    event.content.respond(user_input)
+                # elif isinstance(event, TerminationEvent):
+                #     continue
+                elif isinstance(event, RunCompletionEvent):
+                    result_history = event.content.history
+                    summary = event.content.summary
+                    context_vars = event.content.context_variables
+                    last_speaker = event.content.last_speaker
+        else:
+            result, context, last_agent = initiate_group_chat(
+                pattern=pattern,
+                messages=prompt,
+                max_rounds=max_rounds
+            )
+            global_history = result.chat_history
 
 
         # print(f"global_history: {global_history}")
