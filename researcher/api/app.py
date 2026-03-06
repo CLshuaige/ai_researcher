@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
+from pathlib import Path
+from typing import Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from researcher.api.events import ProjectEventBus
 from researcher.api.schemas import (
-    ArtifactContentResponse,
-    ArtifactsResponse,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
+    FileContentResponse,
+    FilesResponse,
+    FileUpsertRequest,
+    FileWriteResponse,
     LogsResponse,
     NodeHistoryResponse,
     NodeResult,
@@ -26,6 +33,10 @@ from researcher.api.service import APIProjectService
 app = FastAPI(title="AI Researcher API", version="0.1.0")
 service = APIProjectService()
 event_bus = ProjectEventBus()
+
+
+def _cleanup_file(path: str) -> None:
+    Path(path).unlink(missing_ok=True)
 
 
 @app.get("/health")
@@ -99,23 +110,59 @@ async def latest_node_result(project_id: str, node_name: str) -> NodeResult:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/projects/{project_id}/artifacts", response_model=ArtifactsResponse)
-async def list_artifacts(project_id: str) -> ArtifactsResponse:
+@app.get("/api/v1/projects/{project_id}/files", response_model=FilesResponse)
+async def list_files(project_id: str, download: bool = Query(default=False)) -> Any:
     try:
-        return await run_in_threadpool(service.list_artifacts, project_id)
+        if download:
+            zip_path = await run_in_threadpool(service.build_project_zip, project_id)
+            return FileResponse(
+                path=str(zip_path),
+                media_type="application/zip",
+                filename=f"{project_id}.zip",
+                background=BackgroundTask(_cleanup_file, str(zip_path)),
+            )
+        return await run_in_threadpool(service.list_files, project_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/projects/{project_id}/artifacts/{artifact_path:path}", response_model=ArtifactContentResponse)
-async def get_artifact_content(project_id: str, artifact_path: str) -> ArtifactContentResponse:
+@app.get("/api/v1/projects/{project_id}/files/{file_path:path}", response_model=FileContentResponse)
+async def get_file_content(project_id: str, file_path: str, download: bool = Query(default=False)) -> Any:
     try:
-        return await run_in_threadpool(service.get_artifact_content, project_id, artifact_path)
+        if download:
+            target_path = await run_in_threadpool(service.get_file_download_path, project_id, file_path)
+            media_type, _ = mimetypes.guess_type(str(target_path))
+            return FileResponse(
+                path=str(target_path),
+                media_type=media_type or "application/octet-stream",
+                filename=target_path.name,
+            )
+        return await run_in_threadpool(service.get_file_content, project_id, file_path)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/v1/projects/{project_id}/files/{file_path:path}", response_model=FileWriteResponse)
+async def upsert_project_file(
+    project_id: str,
+    file_path: str,
+    request: FileUpsertRequest,
+) -> FileWriteResponse:
+    try:
+        return await run_in_threadpool(service.upsert_project_file, project_id, file_path, request)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

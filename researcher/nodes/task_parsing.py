@@ -113,7 +113,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
         
-        max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
+        max_rounds = max_iterations * 2 + 1 if enable_hitl else 4
         
         result, context, last_agent = initiate_group_chat(
             pattern=pattern,
