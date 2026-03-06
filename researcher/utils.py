@@ -159,8 +159,19 @@ def load_global_config(config_path: Optional[Path] = None, config_filename: str 
 
 
 
+def merge_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+
+    merged = dict(base)
+    for key, value in patch.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def update_llm_config(llm_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Update LLM configuration with new settings"""
+
     updated_config = llm_config.copy()
     for key, value in new_config.items():
         if value is not None:
@@ -169,7 +180,7 @@ def update_llm_config(llm_config: Dict[str, Any], new_config: Dict[str, Any]) ->
 
 
 def parse_json_from_response(response: str) -> Dict[str, Any]:
-    """Extract and parse JSON from LLM response"""
+
     try:
         if "```json" in response:
             json_str = response.split("```json")[1].split("```")[0].strip()
@@ -190,7 +201,6 @@ def serialize_groupchat_messages(agent_chat_messages) -> dict:
         else:
             manager_name = getattr(manager, "name", None) or "GroupChatManager"
 
-        # 关键修复点：messages 不是 list，而是 dict
         flattened_messages = []
 
         if isinstance(messages, dict):
@@ -377,4 +387,3 @@ def deduplicate_long_repeats(sender, message, recipient, silent):
             return message
     else:
         return new_text
-

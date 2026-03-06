@@ -1,6 +1,7 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Any, Dict
 from datetime import datetime
+from copy import deepcopy
 import time
 
 from researcher.config import get_workspace_dir, update_model_config
@@ -67,7 +68,16 @@ class AIResearcher:
         self.current_state: Optional[ResearchState] = None
         self.session_id: Optional[str] = None
 
-    def run(self, input_text: str, input_file: Optional[Path] = None, start_node: Optional[str] = None, config: dict = None) -> ResearchState:
+    def run(
+        self,
+        input_text: str,
+        input_file: Optional[Path] = None,
+        start_node: Optional[str] = None,
+        config: dict = None,
+        mode: Optional[str] = None,
+        post_config: Optional[dict] = None,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> ResearchState:
         """
         Execute the complete research workflow
 
@@ -75,6 +85,9 @@ class AIResearcher:
             input_text: Initial research prompt or task description
             input_file: Optional path to input.md file
             config: Optional configuration dictionary
+            mode: Optional run mode. "auto" for full workflow, "step" for single-node execution
+            post_config: Optional config patch applied in initialization node
+            event_callback: Optional callback for node completion updates
 
         Returns:
             Final research state with all artifacts
@@ -90,11 +103,24 @@ class AIResearcher:
 
         # Generate session_id from workspace directory name
         self.session_id = self.workspace_dir.name
+        project_id = self.session_id
+
+        runtime_config = deepcopy(config or {})
+        workflow = runtime_config.get("researcher", {}).get("workflow")
+        run_mode = mode or ("auto" if workflow == "default" else "step")
+        if run_mode == "auto":
+            runtime_config.setdefault("researcher", {})["workflow"] = "default"
+        else:
+            runtime_config.setdefault("researcher", {})["workflow"] = "step"
 
         initial_state: ResearchState = {
             "input_text": input_text,
             "start_node": start_node,
-            "config": config,
+            "config": runtime_config,
+            "post_config": post_config,
+            "run_mode": run_mode,
+            "project_id": project_id,
+            "task": None,
             "literature": None,
             "idea": None,
             "method": None,
@@ -107,16 +133,24 @@ class AIResearcher:
             "next_node": None,
             "error": None,
             "session_id": self.session_id,
+            "opencode": None,
         }
 
         # Save session metadata
-        session_data = {
+        now = datetime.now().isoformat()
+        session_data = load_session_metadata(self.workspace_dir) or {}
+        session_data.update({
             "session_id": self.session_id,
+            "project_id": project_id,
             "project_name": self.project_name,
-            "created_at": datetime.now().isoformat(),
             "status": "running",
             "stage": "initialization",
-        }
+            "run_mode": run_mode,
+            "config": runtime_config,
+            "input_text": input_text,
+            "updated_at": now,
+        })
+        session_data.setdefault("created_at", now)
         save_session_metadata(self.workspace_dir, session_data)
 
         print(f"Starting research workflow for project: {self.project_name}")
@@ -124,16 +158,40 @@ class AIResearcher:
         print(f"Session ID: {self.session_id}")
 
         # Execute workflow with thread_id for checkpointing
-        config = {"configurable": {"thread_id": self.session_id}}
-        final_state = self.graph.invoke(initial_state, config=config)
+        thread_config = {"configurable": {"thread_id": self.session_id}}
+        if event_callback:
+            final_state = dict(initial_state)
+            event_callback({
+                "event": "run_started",
+                "project_id": project_id,
+                "run_mode": run_mode,
+                "start_node": start_node or "task_parsing",
+                "timestamp": datetime.now().isoformat(),
+            })
+            for update in self.graph.stream(initial_state, config=thread_config, stream_mode="updates"):
+                for node_name, node_delta in update.items():
+                    if not isinstance(node_delta, dict):
+                        continue
+                    final_state.update(node_delta)
+                    event_callback({
+                        "event": "node_completed",
+                        "project_id": project_id,
+                        "node": node_name,
+                        "stage": node_delta.get("stage", node_name),
+                        "delta": node_delta,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+        else:
+            final_state = self.graph.invoke(initial_state, config=thread_config)
 
-        # Store state
+
         self.current_state = final_state
 
         # Update session metadata
         session_data["status"] = "completed" if not final_state.get("error") else "failed"
         session_data["stage"] = final_state["stage"]
         session_data["completed_at"] = datetime.now().isoformat()
+        session_data["updated_at"] = datetime.now().isoformat()
         save_session_metadata(self.workspace_dir, session_data)
 
         # Report completion

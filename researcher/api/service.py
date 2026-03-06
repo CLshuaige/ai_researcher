@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
+from threading import Lock
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+import re
+
+from pydantic import BaseModel
+
+from researcher.researcher import AIResearcher
+from researcher.utils import (
+    get_project_root,
+    load_global_config,
+    save_session_metadata,
+    load_session_metadata,
+    save_json,
+    load_json,
+    merge_dict,
+)
+from researcher.api.events import ProjectEventBus
+from researcher.api.schemas import (
+    ArtifactContentResponse,
+    ArtifactInfo,
+    ArtifactsResponse,
+    ConfigUpdateRequest,
+    ConfigUpdateResponse,
+    LogsResponse,
+    NodeHistoryResponse,
+    NodeProcess,
+    NodeResult,
+    ProjectListResponse,
+    ProjectCreateRequest,
+    ProjectCreateResponse,
+    ProjectStatusResponse,
+    RunRequest,
+    RunResponse,
+)
+
+
+NODE_ORDER = [
+    "task_parsing",
+    "literature_review",
+    "hypothesis_construction",
+    "method_design",
+    "experiment_execution",
+    "report_generation",
+    "review",
+]
+
+
+class APIProjectService:
+    def __init__(self, base_dir: Optional[Path] = None):
+        root = base_dir or (get_project_root() / "workspace" / "api_projects")
+        self.base_dir = Path(root)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.base_dir / "index.json"
+        self._project_locks: Dict[str, Lock] = {}
+        self._locks_guard = Lock()
+
+    def _get_project_lock(self, project_id: str) -> Lock:
+        with self._locks_guard:
+            if project_id not in self._project_locks:
+                self._project_locks[project_id] = Lock()
+            return self._project_locks[project_id]
+
+    def _safe_slug(self, text: str) -> str:
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+        return slug or "project"
+
+    def _load_index(self) -> Dict[str, str]:
+        return load_json(self.index_path) or {}
+
+    def _save_index(self, index: Dict[str, str]) -> None:
+        save_json(index, self.index_path)
+
+    def _resolve_workspace(self, project_id: str) -> Path:
+        index = self._load_index()
+        raw_path = index.get(project_id)
+        if not raw_path:
+            raise FileNotFoundError(f"Unknown project_id: {project_id}")
+        workspace_dir = Path(raw_path)
+        if not workspace_dir.exists():
+            raise FileNotFoundError(f"Workspace not found for project_id: {project_id}")
+        return workspace_dir
+
+    def _load_project_session(self, workspace_dir: Path) -> Dict[str, Any]:
+        session = load_session_metadata(workspace_dir) or {}
+        if not session:
+            raise FileNotFoundError(f"session.json not found in {workspace_dir}")
+        return session
+
+    def _serialize(self, obj: Any) -> Any:
+        if isinstance(obj, BaseModel):
+            return obj.model_dump()
+        if isinstance(obj, Path):
+            return str(obj)
+        if isinstance(obj, dict):
+            return {k: self._serialize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._serialize(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [self._serialize(v) for v in obj]
+        return obj
+
+    def _read_log_tail(self, workspace_dir: Path, tail_lines: int = 25) -> List[str]:
+        log_file = workspace_dir / "logs" / "execution.log"
+        if not log_file.exists():
+            return []
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+        return lines[-tail_lines:]
+
+    def _latest_history_file(self, workspace_dir: Path, node_name: str) -> Optional[Path]:
+        history_dir = workspace_dir / "history" / node_name
+        if not history_dir.exists():
+            return None
+        files = sorted(history_dir.glob("*.json"))
+        return files[-1] if files else None
+
+    def _count_history_messages(self, history_file: Optional[Path]) -> int:
+        if not history_file or not history_file.exists():
+            return 0
+        data = load_json(history_file) or {}
+        messages = data.get("messages") or []
+        return len(messages)
+
+    def _artifact_candidates_for_node(self, node_name: str) -> List[str]:
+        mapping = {
+            "task_parsing": ["task.md"],
+            "literature_review": ["literature.md"],
+            "hypothesis_construction": ["idea.md"],
+            "method_design": ["method.md"],
+            "experiment_execution": ["results.md"],
+            "report_generation": [
+                "paper/output.md",
+                "paper/main.pdf",
+                "paper/main.tex",
+                "paper/references.bib",
+            ],
+            "review": ["referee.md"],
+        }
+        return mapping.get(node_name, [])
+
+    def _build_node_result(self, workspace_dir: Path, node_name: str, delta: Dict[str, Any]) -> NodeResult:
+        history_file = self._latest_history_file(workspace_dir, node_name)
+        artifacts: List[str] = []
+        for rel in self._artifact_candidates_for_node(node_name):
+            path = workspace_dir / rel
+            if path.exists():
+                artifacts.append(rel)
+
+        output = self._serialize(delta)
+        output["workspace_dir"] = str(workspace_dir)
+
+        stage = str(delta.get("stage") or node_name)
+        return NodeResult(
+            node=node_name,
+            stage=stage,
+            next_node=delta.get("next_node"),
+            process=NodeProcess(
+                history_path=str(history_file) if history_file else None,
+                message_count=self._count_history_messages(history_file),
+                log_tail=self._read_log_tail(workspace_dir, tail_lines=20),
+            ),
+            output=output,
+            artifacts=artifacts,
+            opencode=self._serialize(delta.get("opencode")),
+        )
+
+    def create_project(self, request: ProjectCreateRequest) -> ProjectCreateResponse:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        slug = self._safe_slug(request.project_name)
+        project_id = f"{timestamp}_{slug}_{uuid4().hex[:8]}"
+        workspace_dir = self.base_dir / project_id
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+
+        config_path = Path(request.config_path) if request.config_path else None
+        config = load_global_config(config_path=config_path)
+        config.setdefault("researcher", {})
+        config["researcher"]["workflow"] = "default" if request.mode == "auto" else "step"
+
+        session_data = {
+            "session_id": project_id,
+            "project_id": project_id,
+            "project_name": request.project_name,
+            "workspace_dir": str(workspace_dir),
+            "input_text": request.input_text,
+            "config": config,
+            "model_preset": request.model_preset,
+            "run_mode": request.mode,
+            "status": "idle",
+            "stage": "initialization",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        save_session_metadata(workspace_dir, session_data)
+
+        index = self._load_index()
+        index[project_id] = str(workspace_dir)
+        self._save_index(index)
+
+        return ProjectCreateResponse(
+            project_id=project_id,
+            project_name=request.project_name,
+            workspace_dir=str(workspace_dir),
+            run_mode=request.mode,
+            available_nodes=NODE_ORDER,
+        )
+
+    def update_project_config(self, project_id: str, request: ConfigUpdateRequest) -> ConfigUpdateResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        session = self._load_project_session(workspace_dir)
+        current_config = session.get("config") or {}
+        merged_config = merge_dict(current_config, request.config_patch)
+        session["config"] = merged_config
+        session["updated_at"] = datetime.now().isoformat()
+        save_session_metadata(workspace_dir, session)
+
+        return ConfigUpdateResponse(
+            project_id=project_id,
+            applied_patch=request.config_patch,
+            researcher_config=merged_config.get("researcher", {}),
+        )
+
+    def get_project_status(self, project_id: str) -> ProjectStatusResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        session = self._load_project_session(workspace_dir)
+        return ProjectStatusResponse(
+            project_id=project_id,
+            project_name=session.get("project_name", "unknown"),
+            status=session.get("status", "unknown"),
+            stage=session.get("stage", "unknown"),
+            run_mode=session.get("run_mode", "step"),
+            workspace_dir=str(workspace_dir),
+            updated_at=session.get("updated_at"),
+        )
+
+    def list_projects(self) -> ProjectListResponse:
+        index = self._load_index()
+        projects: List[ProjectStatusResponse] = []
+        for project_id, raw_path in index.items():
+            workspace_dir = Path(raw_path)
+            if not workspace_dir.exists():
+                continue
+            session = load_session_metadata(workspace_dir) or {}
+            projects.append(
+                ProjectStatusResponse(
+                    project_id=project_id,
+                    project_name=session.get("project_name", "unknown"),
+                    status=session.get("status", "unknown"),
+                    stage=session.get("stage", "unknown"),
+                    run_mode=session.get("run_mode", "step"),
+                    workspace_dir=str(workspace_dir),
+                    updated_at=session.get("updated_at"),
+                )
+            )
+
+        projects.sort(
+            key=lambda item: item.updated_at or "",
+            reverse=True,
+        )
+        return ProjectListResponse(projects=projects, total=len(projects))
+
+    def latest_project(self) -> ProjectStatusResponse:
+        project_list = self.list_projects()
+        if not project_list.projects:
+            raise FileNotFoundError("No projects found")
+        return project_list.projects[0]
+
+    def run_project(self, project_id: str, request: RunRequest, event_bus: ProjectEventBus) -> RunResponse:
+        lock = self._get_project_lock(project_id)
+        with lock:
+            workspace_dir = self._resolve_workspace(project_id)
+            session = self._load_project_session(workspace_dir)
+
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_mode = request.mode or session.get("run_mode") or "step"
+            start_node = request.start_node or "task_parsing"
+            input_text = request.input_text or session.get("input_text") or "Define a novel research problem in AI."
+            config = deepcopy(session.get("config") or load_global_config())
+
+            session["status"] = "running"
+            session["stage"] = "initialization"
+            session["run_mode"] = run_mode
+            session["updated_at"] = datetime.now().isoformat()
+            session["last_run_id"] = run_id
+            save_session_metadata(workspace_dir, session)
+
+            event_bus.publish(project_id, {
+                "event": "run_started",
+                "project_id": project_id,
+                "run_id": run_id,
+                "run_mode": run_mode,
+                "start_node": start_node,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            nodes: List[NodeResult] = []
+
+            def _on_event(event: Dict[str, Any]) -> None:
+                payload = dict(event)
+                payload["project_id"] = project_id
+                payload["run_id"] = run_id
+
+                if payload.get("event") == "node_completed":
+                    node = payload.get("node", "unknown")
+                    delta = payload.get("delta") if isinstance(payload.get("delta"), dict) else {}
+                    node_result = self._build_node_result(workspace_dir, node, delta)
+                    nodes.append(node_result)
+                    payload["node_result"] = node_result.model_dump()
+
+                event_bus.publish(project_id, self._serialize(payload))
+
+            researcher = AIResearcher(
+                project_name=session.get("project_name", "research_project"),
+                workspace_dir=workspace_dir,
+                clear_workspace=False,
+                model_preset=session.get("model_preset"),
+            )
+
+            try:
+                final_state = researcher.run(
+                    input_text=input_text,
+                    start_node=start_node,
+                    config=config,
+                    mode=run_mode,
+                    post_config=request.post_config,
+                    event_callback=_on_event,
+                )
+            except Exception:
+                session["status"] = "failed"
+                session["stage"] = "error"
+                session["updated_at"] = datetime.now().isoformat()
+                save_session_metadata(workspace_dir, session)
+                event_bus.publish(project_id, {
+                    "event": "run_failed",
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "timestamp": datetime.now().isoformat(),
+                })
+                raise
+
+            status = "completed" if not final_state.get("error") else "failed"
+            session["status"] = status
+            session["stage"] = final_state.get("stage", "unknown")
+            session["updated_at"] = datetime.now().isoformat()
+            save_session_metadata(workspace_dir, session)
+
+            response = RunResponse(
+                project_id=project_id,
+                run_id=run_id,
+                run_mode=run_mode,
+                stage=str(final_state.get("stage", "unknown")),
+                status=status,
+                start_node=start_node,
+                nodes=nodes,
+                final_state=self._serialize(final_state),
+            )
+
+            run_path = workspace_dir / "runs" / f"{run_id}.json"
+            save_json(response.model_dump(), run_path)
+
+            event_bus.publish(project_id, {
+                "event": "run_completed",
+                "project_id": project_id,
+                "run_id": run_id,
+                "status": status,
+                "stage": response.stage,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            return response
+
+    def list_artifacts(self, project_id: str) -> ArtifactsResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        artifacts: List[ArtifactInfo] = []
+        for path in workspace_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(workspace_dir)
+            stat = path.stat()
+            artifacts.append(
+                ArtifactInfo(
+                    path=str(rel),
+                    size=stat.st_size,
+                    modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                )
+            )
+        artifacts.sort(key=lambda x: x.modified_at, reverse=True)
+        return ArtifactsResponse(project_id=project_id, artifacts=artifacts)
+
+    def get_artifact_content(self, project_id: str, artifact_path: str) -> ArtifactContentResponse:
+        workspace_dir = self._resolve_workspace(project_id).resolve()
+        target_path = (workspace_dir / artifact_path).resolve()
+        if not str(target_path).startswith(str(workspace_dir)):
+            raise PermissionError("Invalid artifact path")
+        if not target_path.exists() or not target_path.is_file():
+            raise FileNotFoundError(f"Artifact not found: {artifact_path}")
+
+        suffix = target_path.suffix.lower()
+        if suffix in {".md", ".txt", ".json", ".log", ".tex", ".py", ".yaml", ".yml"}:
+            content = target_path.read_text(encoding="utf-8")
+        else:
+            content = f"[binary file] {target_path.name}"
+
+        return ArtifactContentResponse(
+            project_id=project_id,
+            path=str(target_path.relative_to(workspace_dir)),
+            content=content,
+        )
+
+    def list_node_history(self, project_id: str, node_name: str) -> NodeHistoryResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        history_dir = workspace_dir / "history" / node_name
+        files = []
+        if history_dir.exists():
+            files = [str(path.relative_to(workspace_dir)) for path in sorted(history_dir.glob("*.json"))]
+        return NodeHistoryResponse(project_id=project_id, node=node_name, files=files)
+
+    def latest_node_result(self, project_id: str, node_name: str) -> NodeResult:
+        workspace_dir = self._resolve_workspace(project_id)
+
+        runs_dir = workspace_dir / "runs"
+        if runs_dir.exists():
+            run_files = sorted(runs_dir.glob("*.json"))
+            if run_files:
+                latest_run = load_json(run_files[-1]) or {}
+                for node_data in reversed(latest_run.get("nodes", [])):
+                    if node_data.get("node") == node_name:
+                        return NodeResult(**node_data)
+
+        return self._build_node_result(workspace_dir, node_name, {"stage": node_name})
+
+    def get_logs(self, project_id: str, tail_lines: int = 200) -> LogsResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        return LogsResponse(project_id=project_id, lines=self._read_log_tail(workspace_dir, tail_lines=tail_lines))

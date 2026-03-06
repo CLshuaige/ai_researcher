@@ -36,7 +36,7 @@ Edit `.env` with your API keys and preferences.
 
 ## Usage
 
-### Command Line
+### CLI
 
 ```bash
 python -m researcher.main --input "Your research task" --project-name "my_project"
@@ -48,98 +48,33 @@ Or with input file:
 python -m researcher.main --input path/to/input.md --project-name "my_project"
 ```
 
-### Web Interface
+### FastAPI
 
-Launch the Gradio web interface:
+Start API server:
 
 ```bash
-python gradio.py
+python api_main.py
 ```
 
-Then open your browser to `http://localhost:7860` to access the interactive UI with:
-- Model selection and configuration
-- Real-time workflow progress tracking
-- Artifact visualization
-- Development status overview
+Default address: `http://127.0.0.1:8001`
 
-## Structure
+OpenAPI docs:
 
-```
-researcher/
-├── config.py              # Configuration management
-├── state.py               # LangGraph state schema
-├── schemas.py             # Pydantic data models
-├── utils.py               # Utility functions
-├── llm.py                 # LLM client and model presets
-├── exceptions.py          # Custom exceptions
-├── debate.py              # AG2 debate orchestration
-├── researcher.py          # Main researcher class
-├── main.py                # Entry point
-├── graph/
-│   └── researcher_graph.py  # LangGraph workflow definition
-├── agents/                # AG2 agent implementations
-│   ├── proposer.py
-│   ├── critic.py
-│   ├── formatter.py
-│   ├── searcher.py
-│   ├── summarizer.py
-│   ├── writer.py
-│   └── reviewer.py
-├── nodes/                 # Node implementations
-│   ├── task_parsing.py
-│   ├── literature_review.py
-│   ├── hypothesis_construction.py
-│   ├── method_design.py
-│   ├── experiment_execution.py
-│   ├── report_generation.py
-│   └── review.py
-└── prompts/
-    └── templates.py       # Prompt templates
+- `http://127.0.0.1:8001/docs`
+- `http://127.0.0.1:8001/redoc`
 
-workspace/                 # Generated research artifacts
-└── {timestamp}_{project}/
-    ├── input.md
-    ├── task.md
-    ├── literature.md
-    ├── literature/
-    │   ├── papers.json
-    │   └── arxiv_cache/
-    │       ├── {timestamp}_{arxiv_id}.pdf
-    │       └── {timestamp}_metadata.json
-    ├── idea.md
-    ├── method.md
-    ├── results.md
-    ├── paper.pdf
-    ├── referee.md
-    ├── code/
-    ├── data/
-    ├── figures/
-    ├── tex/
-    └── logs/
-        ├── debate_hypothesis_{timestamp}.json
-        └── debate_method_{timestamp}.json
-```
+API endpoints:
 
-## Development Status
-
-**Preliminary completion:**
-- Core framework with LangGraph workflow orchestration
-- AG2-based multi-agent debate system (DebateTeam)
-- All 7 workflow nodes with structured data models
-- Literature review with arXiv integration and PDF caching
-- Hypothesis construction through Proposer-Critic debate
-- Method design through Proposer-Critic debate
-- Report generation with Writer agent
-- ICML-style review with Reviewer agent
-- Model presets for OpenAI, Anthropic, and local models
-- Workspace management with timestamped directories
-
-**TODO:**
-- Human-in-the-loop logic for task parsing (Asker + Formatter agents)
-- AG2 multi-agent collaboration for experiment execution (RA + Engineer)
-- Code execution environment for experiments
-- LaTeX compilation for paper generation
-
-## License
-
-MIT
+- `GET /health`: health check.
+- `POST /api/v1/projects`: create project.
+- `GET /api/v1/projects`: list all projects.
+- `GET /api/v1/projects/latest`: get latest updated project.
+- `POST /api/v1/projects/{project_id}/config`: patch project config.
+- `POST /api/v1/projects/{project_id}/runs`: run workflow.
+- `GET /api/v1/projects/{project_id}`: project status.
+- `GET /api/v1/projects/{project_id}/nodes/{node_name}/latest`: latest node result.
+- `GET /api/v1/projects/{project_id}/artifacts`: list artifacts.
+- `GET /api/v1/projects/{project_id}/artifacts/{artifact_path}`: read artifact.
+- `GET /api/v1/projects/{project_id}/history/{node_name}`: node history files.
+- `GET /api/v1/projects/{project_id}/logs?tail_lines=200`: logs.
+- `WS /api/v1/projects/{project_id}/events`: realtime events.

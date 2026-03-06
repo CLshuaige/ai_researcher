@@ -34,6 +34,8 @@ pyyaml>=6.0.0
 
 # Web interface
 gradio>=4.0.0
+fastapi>=0.111.0
+uvicorn>=0.30.0
 
 # OpenCode integration
 opencode-ai==0.1.0a36

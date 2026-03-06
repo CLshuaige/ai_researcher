@@ -22,8 +22,12 @@ class ResearchState(TypedDict):
     input_text: str
     start_node: Optional[str]
     config: Optional[dict]
+    post_config: Optional[dict]
+    run_mode: Optional[str]
+    project_id: str
 
     # Research artifacts (structured objects passed between nodes)
+    task: Optional[str]
     literature: Optional[LiteratureReview]
     idea: Optional[ResearchIdea]
     method: Optional[ExperimentalMethod]
@@ -38,7 +42,8 @@ class ResearchState(TypedDict):
     # Workflow metadata
     stage: str
     error: Optional[str]
-    next_node: str
+    next_node: Optional[str]
 
     # Session management
     session_id: str
+    opencode: Optional[dict]

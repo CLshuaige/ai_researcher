@@ -56,6 +56,13 @@ def main():
         default=None,
         help="The task node to start the research workflow, choices: ['task_parsing', 'literature_review', 'hypothesis_construction', 'method_design', 'experiment_execution', ...]"
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["auto", "step"],
+        default=None,
+        help="Run mode: auto (full workflow) or step (single node)"
+    )
 
     args = parser.parse_args()
 
@@ -94,7 +101,13 @@ def main():
     print(f"Workspace: {researcher.get_workspace_path()}")
     print("Starting research workflow...")
 
-    final_state = researcher.run(input_text=input_text, input_file=input_file, start_node=args.start_node, config=config)
+    final_state = researcher.run(
+        input_text=input_text,
+        input_file=input_file,
+        start_node=args.start_node,
+        config=config,
+        mode=args.mode,
+    )
 
     print(f"\nWorkflow completed. Stage: {final_state['stage']}")
     print(f"Workspace: {researcher.get_workspace_path()}")

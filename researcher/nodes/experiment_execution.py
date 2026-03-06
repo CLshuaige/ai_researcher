@@ -413,7 +413,13 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
     update_state = {
         "results": exp_result,
-        "stage": "experiment_execution"
+        "stage": "experiment_execution",
+        "opencode": {
+            "base_url": opencode_runtime.get("base_url"),
+            "provider_id": opencode_runtime.get("provider_id"),
+            "model_id": opencode_runtime.get("model_id"),
+            "session_id": context.get("session_id"),
+        } if backend == "opencode" else None,
     }
     # router
     if state["config"]["researcher"]["workflow"] == "default":
