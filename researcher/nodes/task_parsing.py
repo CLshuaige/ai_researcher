@@ -1,7 +1,7 @@
 from typing import Dict, Any
 
 from autogen import ConversableAgent
-from autogen.agentchat import initiate_group_chat
+from autogen.agentchat import initiate_group_chat, run_group_chat_iter
 from autogen.agentchat.group.patterns import DefaultPattern
 from autogen.agentchat.group import (
     OnCondition,
@@ -14,7 +14,9 @@ from autogen.agentchat.group import (
     FunctionTargetResult,
     AgentTarget,
     TerminateTarget,
+    RevertToUserTarget
 )
+from autogen.events.agent_events import GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent
 
 from researcher.state import ResearchState
 from researcher.agents import AskerAgent, TaskFormatterAgent
@@ -100,6 +102,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
             agents=agents_list,
             user_agent=user_agent,
             context_variables=initial_context,
+            #group_after_work=TerminateTarget(),
             group_manager_args={"llm_config": llm_config}
         )
 
@@ -115,15 +118,45 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         
         max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
         
-        result, context, last_agent = initiate_group_chat(
+
+        # result, context, last_agent = initiate_group_chat(
+        #     pattern=pattern,
+        #     messages=prompt,
+        #     max_rounds=max_rounds
+        # )
+        iterator = run_group_chat_iter(
             pattern=pattern,
             messages=prompt,
-            max_rounds=max_rounds
+            max_rounds=max_rounds,
+            yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent]
         )
 
+        global_history = []
+        for event in iterator:
+            if isinstance(event, GroupChatRunChatEvent):
+                print(f"\n=== {event.content.speaker}'s turn ===")
+            elif isinstance(event, TextEvent):
+                print(f"{event.content.content}")
+                global_history.append({
+                    "name": event.content.sender,
+                    "content": event.content.content
+                })
+            elif isinstance(event, InputRequestEvent):
+                user_input = input(event.content.prompt)
+                event.content.respond(user_input)
+            # elif isinstance(event, TerminationEvent):
+            #     continue
+            elif isinstance(event, RunCompletionEvent):
+                result_history = event.content.history
+                summary = event.content.summary
+                context_vars = event.content.context_variables
+                last_speaker = event.content.last_speaker
+
+
+        # print(f"global_history: {global_history}")
         # Extract task from formatter's last message
         task = None
-        for msg in reversed(result.chat_history):
+        for msg in reversed(global_history):
             if msg.get("name") == formatter.name and msg.get("content"):
                 task = msg["content"]
                 break
@@ -137,7 +170,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="task_parsing",
-            messages=result.chat_history,
+            messages=global_history,
             agent_chat_messages={
                 asker.name: asker.chat_messages,
                 formatter.name: formatter.chat_messages
