@@ -19,13 +19,17 @@ from researcher.api.schemas import (
     ProjectStatusResponse,
     RunRequest,
     RunResponse,
+    InputSubmitRequest,
 )
 from researcher.api.service import APIProjectService
+from researcher.api.input_store import InputResponseStore
 
 
 app = FastAPI(title="AI Researcher API", version="0.1.0")
+input_store = InputResponseStore()
 service = APIProjectService()
 event_bus = ProjectEventBus()
+app.state.event_bus = event_bus
 
 
 @app.get("/health")
@@ -78,6 +82,12 @@ async def run_project(project_id: str, request: RunRequest) -> RunResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/v1/projects/{project_id}/input")
+async def submit_input(project_id: str, request: InputSubmitRequest):
+
+    input_store.resolve(request.request_id, request.value)
+
+    return {"status": "received"}
 
 @app.get("/api/v1/projects/{project_id}", response_model=ProjectStatusResponse)
 async def get_project_status(project_id: str) -> ProjectStatusResponse:

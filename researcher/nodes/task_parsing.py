@@ -1,3 +1,5 @@
+from datetime import datetime
+import sys
 from typing import Dict, Any
 
 from autogen import ConversableAgent
@@ -30,8 +32,55 @@ from researcher.utils import (
     save_agent_history,
 )
 from researcher.exceptions import WorkflowError
-# app
-from researcher.api.app import app
+import uuid
+import asyncio
+
+
+def _truncate_text(text: Any, limit: int = 500) -> str:
+    raw = str(text)
+    if len(raw) <= limit:
+        return raw
+    return f"{raw[:limit]}..."
+
+
+def _publish_task_parsing_progress(
+    state: ResearchState,
+    progress_event: str,
+    **extra: Any,
+) -> None:
+    """Publish per-iteration progress when API runtime is active."""
+    project_id = state.get("project_id")
+    if not project_id:
+        return
+
+    app_module = sys.modules.get("researcher.api.app")
+    if app_module is None:
+        return
+
+    fastapi_app = getattr(app_module, "app", None)
+    event_bus = None
+    if fastapi_app is not None:
+        event_bus = getattr(getattr(fastapi_app, "state", None), "event_bus", None)
+    if event_bus is None:
+        event_bus = getattr(app_module, "event_bus", None)
+    if event_bus is None:
+        return
+
+    payload = {
+        "event": "node_progress",
+        "project_id": project_id,
+        "node": "task_parsing",
+        "stage": "task_parsing",
+        "progress_event": progress_event,
+        "timestamp": datetime.now().isoformat(),
+    }
+    payload.update(extra)
+
+    try:
+        event_bus.publish(project_id, payload)
+    except Exception:
+        # Progress publishing must not break workflow execution.
+        pass
 
 
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
@@ -119,8 +168,17 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
         
         max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
+        print("test")
+        print(f"config: {state['config']}")
+        print(f"iterable: {state['config']['researcher']['iterable']}")
         
         if state["config"]["researcher"]["iterable"]:
+            _publish_task_parsing_progress(
+                state,
+                "iterator_started",
+                max_rounds=max_rounds,
+                human_in_the_loop=enable_hitl,
+            )
             iterator = run_group_chat_iter(
                 pattern=pattern,
                 messages=prompt,
@@ -129,25 +187,79 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
             )
 
             global_history = []
-            for event in iterator:
+            for step, event in enumerate(iterator, start=1):
                 if isinstance(event, GroupChatRunChatEvent):
-                    print(f"\n=== {event.content.speaker}'s turn ===")
+                    speaker = str(event.content.speaker)
+                    print(f"\n=== {speaker}'s turn ===")
+                    _publish_task_parsing_progress(
+                        state,
+                        "turn_started",
+                        step=step,
+                        speaker=speaker,
+                    )
                 elif isinstance(event, TextEvent):
-                    print(f"{event.content.content}")
+                    sender = str(event.content.sender)
+                    content = str(event.content.content)
+                    print(content)
                     global_history.append({
-                        "name": event.content.sender,
-                        "content": event.content.content
+                        "name": sender,
+                        "content": content
                     })
+                    _publish_task_parsing_progress(
+                        state,
+                        "message",
+                        step=step,
+                        sender=sender,
+                        content_preview=_truncate_text(content),
+                    )
                 elif isinstance(event, InputRequestEvent):
-                    user_input = input(event.content.prompt)
+                    prompt_text = str(event.content.prompt)
+                    request_id = str(uuid.uuid4())
+                    _publish_task_parsing_progress(
+                        state,
+                        "input_requested",
+                        step=step,
+                        request_id=request_id,
+                        prompt=_truncate_text(prompt_text),
+                    )
+                    # api call
+                    # 1. wait for client input
+                    app_module = sys.modules.get("researcher.api.app")
+                    print(f"app_module: {app_module}")
+
+                    input_store = getattr(app_module, "input_store", None)
+                    evt = input_store.create(request_id)
+                    user_input = input_store.wait_for_input(request_id)  # 同步阻塞
+                    # 2. input from cli
+                    # user_input = input(prompt_text)
                     event.content.respond(user_input)
-                # elif isinstance(event, TerminationEvent):
-                #     continue
+                    _publish_task_parsing_progress(
+                        state,
+                        "input_submitted",
+                        step=step,
+                        input_length=len(user_input),
+                    )
+                elif isinstance(event, TerminationEvent):
+                    _publish_task_parsing_progress(
+                        state,
+                        "termination",
+                        step=step,
+                        detail=_truncate_text(event.content),
+                    )
                 elif isinstance(event, RunCompletionEvent):
                     result_history = event.content.history
                     summary = event.content.summary
                     context_vars = event.content.context_variables
                     last_speaker = event.content.last_speaker
+                    _publish_task_parsing_progress(
+                        state,
+                        "run_completion",
+                        step=step,
+                        history_length=len(result_history),
+                        last_speaker=str(last_speaker) if last_speaker else None,
+                        summary_preview=_truncate_text(summary),
+                    )
+                print(event)
         else:
             result, context, last_agent = initiate_group_chat(
                 pattern=pattern,
@@ -183,6 +295,11 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
 
         log_stage(workspace_dir, "task_parsing", "Completed")
+        _publish_task_parsing_progress(
+            state,
+            "completed",
+            message_count=len(global_history),
+        )
 
         update_state = {"task": task, "stage": "task_parsing"}
         # router
@@ -192,4 +309,9 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
     except Exception as e:
         log_stage(workspace_dir, "task_parsing", f"Error: {str(e)}")
+        _publish_task_parsing_progress(
+            state,
+            "failed",
+            error=_truncate_text(e),
+        )
         raise WorkflowError(f"Task parsing failed: {str(e)}")

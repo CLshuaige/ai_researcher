@@ -105,3 +105,7 @@ class NodeHistoryResponse(BaseModel):
 class LogsResponse(BaseModel):
     project_id: str
     lines: List[str]
+
+class InputSubmitRequest(BaseModel):
+    request_id: str
+    value: str
