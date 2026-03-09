@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class ProjectCreateRequest(BaseModel):
     project_name: str = Field(default="research_project")
-    input_text: str = Field(default="Define a novel research problem in AI.")
+    input_text: str = Field(default=None)
     config_path: Optional[str] = Field(default=None)
     mode: Literal["step", "auto"] = Field(default="step")
     model_preset: Optional[str] = Field(default=None)
@@ -28,7 +28,6 @@ class ConfigUpdateResponse(BaseModel):
     project_id: str
     applied_patch: Dict[str, Any]
     researcher_config: Dict[str, Any]
-
 
 class RunRequest(BaseModel):
     mode: Optional[Literal["step", "auto"]] = Field(default=None)
@@ -94,6 +93,51 @@ class ArtifactContentResponse(BaseModel):
     project_id: str
     path: str
     content: str
+
+
+class ArtifactUpdateRequest(BaseModel):
+    content: str
+
+
+class ArtifactUpdateResponse(BaseModel):
+    project_id: str
+    path: str
+    size: int
+    updated_at: str
+
+
+class FileInfo(BaseModel):
+    path: str
+    size: int
+    modified_at: str
+    is_text: bool
+
+
+class FilesResponse(BaseModel):
+    project_id: str
+    files: List[FileInfo]
+
+
+class FileContentResponse(BaseModel):
+    project_id: str
+    path: str
+    content: Optional[str] = None
+    is_text: bool
+    encoding: Literal["utf-8", "base64"]
+
+
+class FileUpsertRequest(BaseModel):
+    content: str
+    encoding: Literal["utf-8", "base64"] = Field(default="utf-8")
+    overwrite: bool = Field(default=False)
+
+
+class FileWriteResponse(BaseModel):
+    project_id: str
+    path: str
+    size: int
+    updated_at: str
+    created: bool
 
 
 class NodeHistoryResponse(BaseModel):

@@ -6,7 +6,11 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+import base64
+import os
 import re
+import tempfile
+import zipfile
 
 from pydantic import BaseModel
 
@@ -24,9 +28,16 @@ from researcher.api.events import ProjectEventBus
 from researcher.api.schemas import (
     ArtifactContentResponse,
     ArtifactInfo,
+    ArtifactUpdateRequest,
+    ArtifactUpdateResponse,
     ArtifactsResponse,
     ConfigUpdateRequest,
     ConfigUpdateResponse,
+    FileContentResponse,
+    FileInfo,
+    FilesResponse,
+    FileUpsertRequest,
+    FileWriteResponse,
     LogsResponse,
     NodeHistoryResponse,
     NodeProcess,
@@ -105,12 +116,24 @@ class APIProjectService:
             return [self._serialize(v) for v in obj]
         return obj
 
+    def _is_text_suffix(self, suffix: str) -> bool:
+        return suffix.lower() in {".md", ".txt", ".json", ".log", ".tex", ".py", ".yaml", ".yml", ".csv"}
+
     def _read_log_tail(self, workspace_dir: Path, tail_lines: int = 25) -> List[str]:
         log_file = workspace_dir / "logs" / "execution.log"
         if not log_file.exists():
             return []
         lines = log_file.read_text(encoding="utf-8").splitlines()
         return lines[-tail_lines:]
+
+    def _resolve_project_file_path(self, project_id: str, file_path: str) -> Path:
+        workspace_dir = self._resolve_workspace(project_id).resolve()
+        target_path = (workspace_dir / file_path).resolve()
+        if not str(target_path).startswith(str(workspace_dir)):
+            raise PermissionError("Invalid file path")
+        if not target_path.exists() or not target_path.is_file():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        return target_path
 
     def _latest_history_file(self, workspace_dir: Path, node_name: str) -> Optional[Path]:
         history_dir = workspace_dir / "history" / node_name
@@ -278,7 +301,9 @@ class APIProjectService:
             run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             run_mode = request.mode or session.get("run_mode") or "step"
             start_node = request.start_node or "task_parsing"
-            input_text = request.input_text or session.get("input_text") or "Define a novel research problem in AI."
+            input_text = request.input_text or session.get("input_text")
+            if not input_text:
+                raise ValueError("input_text is required")
             config = deepcopy(session.get("config") or load_global_config())
 
             session["status"] = "running"
@@ -399,8 +424,7 @@ class APIProjectService:
         if not target_path.exists() or not target_path.is_file():
             raise FileNotFoundError(f"Artifact not found: {artifact_path}")
 
-        suffix = target_path.suffix.lower()
-        if suffix in {".md", ".txt", ".json", ".log", ".tex", ".py", ".yaml", ".yml"}:
+        if self._is_text_suffix(target_path.suffix):
             content = target_path.read_text(encoding="utf-8")
         else:
             content = f"[binary file] {target_path.name}"
@@ -410,6 +434,139 @@ class APIProjectService:
             path=str(target_path.relative_to(workspace_dir)),
             content=content,
         )
+
+    def update_artifact_content(
+        self,
+        project_id: str,
+        artifact_path: str,
+        request: ArtifactUpdateRequest,
+    ) -> ArtifactUpdateResponse:
+        lock = self._get_project_lock(project_id)
+        with lock:
+            workspace_dir = self._resolve_workspace(project_id).resolve()
+            target_path = (workspace_dir / artifact_path).resolve()
+            if not str(target_path).startswith(str(workspace_dir)):
+                raise PermissionError("Invalid artifact path")
+            if not target_path.exists() or not target_path.is_file():
+                raise FileNotFoundError(f"Artifact not found: {artifact_path}")
+
+            if not self._is_text_suffix(target_path.suffix):
+                raise ValueError(f"Artifact type is not editable: {target_path.suffix}")
+
+            target_path.write_text(request.content, encoding="utf-8")
+            stat = target_path.stat()
+            updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
+
+            # Update project session heartbeat timestamp for UI freshness.
+            session = self._load_project_session(workspace_dir)
+            session["updated_at"] = datetime.now().isoformat()
+            save_session_metadata(workspace_dir, session)
+
+            return ArtifactUpdateResponse(
+                project_id=project_id,
+                path=str(target_path.relative_to(workspace_dir)),
+                size=stat.st_size,
+                updated_at=updated_at,
+            )
+
+    def list_files(self, project_id: str) -> FilesResponse:
+        workspace_dir = self._resolve_workspace(project_id)
+        files: List[FileInfo] = []
+        for path in workspace_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(workspace_dir)
+            stat = path.stat()
+            files.append(
+                FileInfo(
+                    path=str(rel),
+                    size=stat.st_size,
+                    modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    is_text=self._is_text_suffix(path.suffix),
+                )
+            )
+        files.sort(key=lambda x: x.modified_at, reverse=True)
+        return FilesResponse(project_id=project_id, files=files)
+
+    def build_project_zip(self, project_id: str) -> Path:
+        workspace_dir = self._resolve_workspace(project_id).resolve()
+        fd, tmp_zip_path = tempfile.mkstemp(prefix=f"{project_id}_", suffix=".zip")
+        os.close(fd)
+        zip_path = Path(tmp_zip_path)
+
+        with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in workspace_dir.rglob("*"):
+                if not path.is_file():
+                    continue
+                archive.write(path, arcname=str(path.relative_to(workspace_dir)))
+
+        return zip_path
+
+    def get_file_content(self, project_id: str, file_path: str) -> FileContentResponse:
+        workspace_dir = self._resolve_workspace(project_id).resolve()
+        target_path = self._resolve_project_file_path(project_id, file_path)
+
+        if self._is_text_suffix(target_path.suffix):
+            return FileContentResponse(
+                project_id=project_id,
+                path=str(target_path.relative_to(workspace_dir)),
+                content=target_path.read_text(encoding="utf-8"),
+                is_text=True,
+                encoding="utf-8",
+            )
+
+        return FileContentResponse(
+            project_id=project_id,
+            path=str(target_path.relative_to(workspace_dir)),
+            content=None,
+            is_text=False,
+            encoding="base64",
+        )
+
+    def get_file_download_path(self, project_id: str, file_path: str) -> Path:
+        return self._resolve_project_file_path(project_id, file_path)
+
+    def upsert_project_file(
+        self,
+        project_id: str,
+        file_path: str,
+        request: FileUpsertRequest,
+    ) -> FileWriteResponse:
+        lock = self._get_project_lock(project_id)
+        with lock:
+            workspace_dir = self._resolve_workspace(project_id).resolve()
+            target_path = (workspace_dir / file_path).resolve()
+            if not str(target_path).startswith(str(workspace_dir)):
+                raise PermissionError("Invalid file path")
+
+            existed = target_path.exists()
+            if existed and not request.overwrite:
+                raise FileExistsError(f"File already exists: {file_path}")
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if request.encoding == "utf-8":
+                target_path.write_text(request.content, encoding="utf-8")
+            else:
+                try:
+                    payload = base64.b64decode(request.content, validate=True)
+                except Exception as exc:
+                    raise ValueError("Invalid base64 content") from exc
+                target_path.write_bytes(payload)
+
+            stat = target_path.stat()
+            updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
+
+            session = self._load_project_session(workspace_dir)
+            session["updated_at"] = datetime.now().isoformat()
+            save_session_metadata(workspace_dir, session)
+
+            return FileWriteResponse(
+                project_id=project_id,
+                path=str(target_path.relative_to(workspace_dir)),
+                size=stat.st_size,
+                updated_at=updated_at,
+                created=not existed,
+            )
 
     def list_node_history(self, project_id: str, node_name: str) -> NodeHistoryResponse:
         workspace_dir = self._resolve_workspace(project_id)
