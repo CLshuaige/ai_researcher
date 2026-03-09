@@ -30,8 +30,6 @@ from researcher.utils import (
     save_agent_history,
 )
 from researcher.exceptions import WorkflowError
-# app
-from researcher.api.app import app
 
 
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
@@ -118,7 +116,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
         
-        max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
+        max_rounds = max_iterations * 2 + 1 if enable_hitl else 4
         
         if state["config"]["researcher"]["iterable"]:
             iterator = run_group_chat_iter(

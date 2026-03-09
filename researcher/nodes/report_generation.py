@@ -28,6 +28,7 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
+    save_markdown
 )
 from researcher.prompts.paper_writing import (
     outline_prompt,
@@ -493,15 +494,15 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
 
             elif output_type == "markdown":
                 from ..latex.latex_to_markdown import parse_main_tex
-                output_md_path = paper_dir / "output.md"
+                paper_md_path = get_artifact_path(workspace_dir, "paper")
                 content_md = parse_main_tex(main_tex_path)
                 log_stage(workspace_dir, "report_generation", 
                          f"[✓] Markdown generated")
 
-                output_md_path.write_text(content_md, encoding='utf-8')
+                save_markdown(content_md, paper_md_path)
                 log_stage(workspace_dir, "report_generation", 
-                         f"Markdown generated at: {output_md_path}")
-                paper_dir = output_md_path
+                         f"Markdown generated at: {paper_md_path}")
+                paper_dir = paper_md_path
         except Exception as e:
             log_stage(workspace_dir, "report_generation", 
                      f"[!] Warning: Failed to compile final PDF: {str(e)}")

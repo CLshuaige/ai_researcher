@@ -211,7 +211,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 target=AgentTarget(engineer),
                 messages=(
                     f"Execution Results:\n{results}\n\n"
-                    "Perform a strict completion check before deciding this step is done.\n"
+                    "Perform a completion check before deciding this step is done.\n"
                     "Do not mark completion for partial progress, demo-only output, smoke-test-only output, empty/placeholder results, "
                     "or results that do not satisfy the step objective.\n\n"
                     "Only output '==STEP_COMPLETE==' if ALL of the following are true:\n"
