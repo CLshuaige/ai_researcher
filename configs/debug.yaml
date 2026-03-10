@@ -23,11 +23,7 @@ workspace:
 # Researcher Settings
 researcher:
   workflow: "default"
-<<<<<<< HEAD
   iterable: true
-=======
-  iterable: false
->>>>>>> main
   
   task_parsing:
     mode: "basic"

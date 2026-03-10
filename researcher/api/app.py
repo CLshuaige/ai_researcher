@@ -103,17 +103,7 @@ async def run_project(project_id: str, request: RunRequest) -> RunResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-<<<<<<< HEAD
-@app.post("/api/v1/projects/{project_id}/input")
-async def submit_input(project_id: str, request: InputSubmitRequest):
-
-    input_store.resolve(request.request_id, request.value)
-
-    return {"status": "received"}
-
-=======
 # api-7：暂时不用
->>>>>>> main
 @app.get("/api/v1/projects/{project_id}", response_model=ProjectStatusResponse)
 async def get_project_status(project_id: str) -> ProjectStatusResponse:
     try:
