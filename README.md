@@ -73,8 +73,9 @@ API endpoints:
 - `POST /api/v1/projects/{project_id}/runs`: run workflow.
 - `GET /api/v1/projects/{project_id}`: project status.
 - `GET /api/v1/projects/{project_id}/nodes/{node_name}/latest`: latest node result.
-- `GET /api/v1/projects/{project_id}/artifacts`: list artifacts.
-- `GET /api/v1/projects/{project_id}/artifacts/{artifact_path}`: read artifact.
+- `GET /api/v1/projects/{project_id}/files`: list all files in workspace; use `?download=true` to download whole project zip.
+- `GET /api/v1/projects/{project_id}/files/{file_path}`: read file; use `?download=true` to download single file.
+- `PUT /api/v1/projects/{project_id}/files/{file_path}`: upload/create/update file (`utf-8` or `base64`).
 - `GET /api/v1/projects/{project_id}/history/{node_name}`: node history files.
 - `GET /api/v1/projects/{project_id}/logs?tail_lines=200`: logs.
 - `WS /api/v1/projects/{project_id}/events`: realtime events.

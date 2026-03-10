@@ -32,6 +32,7 @@ from researcher.utils import (
     save_agent_history,
 )
 from researcher.exceptions import WorkflowError
+<<<<<<< HEAD
 import uuid
 import asyncio
 
@@ -81,6 +82,8 @@ def _publish_task_parsing_progress(
     except Exception:
         # Progress publishing must not break workflow execution.
         pass
+=======
+>>>>>>> main
 
 
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
@@ -167,10 +170,14 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
 
         prompt = TASK_CLARIFICATION_PROMPT.format(input_text=input_text)
         
+<<<<<<< HEAD
         max_rounds = max_iterations * 2 + 1 if enable_hitl else 2
         print("test")
         print(f"config: {state['config']}")
         print(f"iterable: {state['config']['researcher']['iterable']}")
+=======
+        max_rounds = max_iterations * 2 + 1 if enable_hitl else 4
+>>>>>>> main
         
         if state["config"]["researcher"]["iterable"]:
             _publish_task_parsing_progress(
