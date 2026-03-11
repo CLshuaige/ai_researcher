@@ -27,7 +27,7 @@ from researcher.api.schemas import (
     ProjectStatusResponse,
     RunRequest,
     RunResponse,
-    InputSubmitRequest,
+    UserInputRequest,
 )
 from researcher.api.service import APIProjectService
 from researcher.api.input_store import InputResponseStore
@@ -203,20 +203,64 @@ async def get_logs(project_id: str, tail_lines: int = Query(default=200, ge=1, l
 
 # api-14
 @app.websocket("/api/v1/projects/{project_id}/events")
-async def project_events(project_id: str, websocket: WebSocket) -> None:
+async def project_events(project_id: str, websocket: WebSocket):
     await websocket.accept()
+
     token, queue = event_bus.subscribe(project_id)
-    try:
+
+    async def send_events():
         while True:
             try:
-                event = await asyncio.wait_for(asyncio.to_thread(queue.get), timeout=15.0)
+                event = await asyncio.to_thread(queue.get)
                 await websocket.send_json(event)
-            except asyncio.TimeoutError:
-                await websocket.send_json({
-                    "event": "heartbeat",
-                    "project_id": project_id,
-                })
+
+            except Exception:
+                break
+
+    async def heartbeat():
+        while True:
+            await asyncio.sleep(15)
+            await websocket.send_json({
+                "event": "heartbeat",
+                "project_id": project_id,
+            })
+
+    async def receive_inputs():
+        while True:
+            data = await websocket.receive_json()
+
+            if data.get("event") == "input_response":
+                request_id = data["request_id"]
+                user_input = data["input"]
+
+                input_store.resolve(request_id, user_input)
+
+    try:
+        sender = asyncio.create_task(send_events())
+        hb = asyncio.create_task(heartbeat())
+        receiver = asyncio.create_task(receive_inputs())
+
+        await asyncio.gather(sender, receiver)
+
     except WebSocketDisconnect:
         pass
+
     finally:
         event_bus.unsubscribe(project_id, token)
+
+
+# api-15
+@app.post("/api/v1/projects/{project_id}/input")
+async def user_input(project_id: str, request: UserInputRequest):
+
+    if not input_store.resolve(request.request_id, request.value):
+        raise HTTPException(
+            status_code=404,
+            detail="request_id not found or already resolved"
+        )
+
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "request_id": request.request_id
+    }

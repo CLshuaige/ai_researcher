@@ -178,9 +178,11 @@ class APIProjectService:
         output["workspace_dir"] = str(workspace_dir)
 
         stage = str(delta.get("stage") or node_name)
+        status = str(delta.get("status") or "unknown")
         return NodeResult(
             node=node_name,
             stage=stage,
+            status=status,
             next_node=delta.get("next_node"),
             process=NodeProcess(
                 history_path=str(history_file) if history_file else None,

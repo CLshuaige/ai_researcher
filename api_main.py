@@ -10,7 +10,7 @@ from researcher.api.app import app
 
 
 HOST = "0.0.0.0"
-PORT = 8001
+PORT = 8005
 
 
 if __name__ == "__main__":

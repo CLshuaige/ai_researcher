@@ -1,24 +1,50 @@
 import threading
+from typing import Dict
 
-# 在 InputResponseStore 中新增同步等待方法
+
 class InputResponseStore:
     def __init__(self):
-        self.pending = {}
+        self.pending: Dict[str, dict] = {}
+        self.lock = threading.Lock()
 
-    def create(self, request_id):
+    def create(self, request_id: str):
         evt = threading.Event()
-        self.pending[request_id] = {"event": evt, "value": None}
-        return evt
 
-    def resolve(self, request_id, value):
-        fut = self.pending.pop(request_id, None)
-        if fut:
-            fut["value"] = value
-            fut["event"].set()
+        with self.lock:
+            self.pending[request_id] = {
+                "event": evt,
+                "value": None,
+            }
 
-    def wait_for_input(self, request_id):
-        fut = self.pending.get(request_id)
-        if fut:
-            fut["event"].wait()  # 阻塞等待
-            return fut["value"]
-        return None
+    def resolve(self, request_id: str, value: str):
+        with self.lock:
+            fut = self.pending.get(request_id)
+
+        if not fut:
+            return False
+
+        fut["value"] = value
+        fut["event"].set()
+
+        return True
+
+    def wait_for_input(self, request_id: str, timeout: int = 600):
+        with self.lock:
+            fut = self.pending.get(request_id)
+
+        if not fut:
+            return None
+
+        ok = fut["event"].wait(timeout)
+
+        with self.lock:
+            self.pending.pop(request_id, None)
+
+        if not ok:
+            raise TimeoutError(f"user input timeout: {request_id}")
+
+        return fut["value"]
+
+    def pending_ids(self):
+        with self.lock:
+            return list(self.pending.keys())

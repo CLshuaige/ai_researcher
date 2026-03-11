@@ -54,6 +54,7 @@ def _publish_task_parsing_progress(
         return
 
     app_module = sys.modules.get("researcher.api.app")
+    print("app_module in pub func", app_module)
     if app_module is None:
         return
 
@@ -82,7 +83,20 @@ def _publish_task_parsing_progress(
         # Progress publishing must not break workflow execution.
         pass
 
+def _wait_for_user_input(request_id: str):
 
+    app_module = sys.modules.get("researcher.api.app")
+
+    if not app_module:
+        raise RuntimeError("API runtime not available")
+
+    input_store = getattr(app_module, "input_store")
+
+    input_store.create(request_id)
+
+    user_input = input_store.wait_for_input(request_id)
+
+    return user_input
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
     """Parse and clarify research task with optional human-in-the-loop"""
     workspace_dir = state["workspace_dir"]
@@ -221,12 +235,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
                     )
                     # api call
                     # 1. wait for client input
-                    app_module = sys.modules.get("researcher.api.app")
-                    print(f"app_module: {app_module}")
-
-                    input_store = getattr(app_module, "input_store", None)
-                    evt = input_store.create(request_id)
-                    user_input = input_store.wait_for_input(request_id)  # 同步阻塞
+                    user_input = _wait_for_user_input(request_id)
                     # 2. input from cli
                     # user_input = input(prompt_text)
                     event.content.respond(user_input)
@@ -235,6 +244,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
                         "input_submitted",
                         step=step,
                         input_length=len(user_input),
+                        user_input=user_input
                     )
                 elif isinstance(event, TerminationEvent):
                     _publish_task_parsing_progress(

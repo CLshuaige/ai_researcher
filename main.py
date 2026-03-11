@@ -4,6 +4,7 @@ from pathlib import Path
 from researcher.researcher import AIResearcher
 from researcher.utils import load_global_config
 
+from researcher.api.app import app
 
 def main():
     parser = argparse.ArgumentParser(
