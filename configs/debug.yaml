@@ -29,6 +29,17 @@ researcher:
     mode: "basic"
     human_in_the_loop: true
     max_iterations: 3
+  source_ingestion:
+    mode: "basic"
+    max_items: null
+    max_files_per_item: null
+    max_depth: null
+    max_bytes_per_file: null
+    max_total_bytes_per_item: null
+    max_preview_rows: null
+    timeout_seconds: null
+    max_rounds_download: null
+    max_rounds_summary: null
   literature_review:
     mode: "basic"
     num_papers: 5

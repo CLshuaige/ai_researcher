@@ -52,6 +52,7 @@ from researcher.api.schemas import (
 
 
 NODE_ORDER = [
+    "source_ingestion",
     "task_parsing",
     "literature_review",
     "hypothesis_construction",
@@ -151,6 +152,10 @@ class APIProjectService:
 
     def _artifact_candidates_for_node(self, node_name: str) -> List[str]:
         mapping = {
+            "source_ingestion": [
+                "knowledge/knowledge_summary.md",
+                "knowledge/metadata.json",
+            ],
             "task_parsing": ["task.md"],
             "literature_review": ["literature.md"],
             "hypothesis_construction": ["idea.md"],
@@ -178,9 +183,19 @@ class APIProjectService:
         output["workspace_dir"] = str(workspace_dir)
 
         stage = str(delta.get("stage") or node_name)
+        if "status" in delta:
+            status = str(delta.get("status"))
+        elif delta.get("error"):
+            status = "failed"
+        elif delta:
+            status = "completed"
+        else:
+            status = "unknown"
+
         return NodeResult(
             node=node_name,
             stage=stage,
+            status=status,
             next_node=delta.get("next_node"),
             process=NodeProcess(
                 history_path=str(history_file) if history_file else None,
