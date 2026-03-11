@@ -5,6 +5,14 @@ from datetime import datetime
 import json
 import re
 
+import sys
+import uuid
+
+from autogen.events.agent_events import GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent
+from autogen.agentchat import run_group_chat_iter
+
+from researcher.state import ResearchState
+
 #from researcher.config import config
 from researcher.exceptions import WorkflowError
 
@@ -387,3 +395,151 @@ def deduplicate_long_repeats(sender, message, recipient, silent):
             return message
     else:
         return new_text
+
+def iterable_group_chat(
+    state: ResearchState,
+    max_rounds: int = 10,
+    enable_hitl: bool = False,
+    pattern = None,
+    prompt: str = None,   
+):
+    _publish_task_parsing_progress(
+        state,
+        "iterator_started",
+        max_rounds=max_rounds,
+        human_in_the_loop=enable_hitl,
+    )
+    iterator = run_group_chat_iter(
+        pattern=pattern,
+        messages=prompt,
+        max_rounds=max_rounds,
+        yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent]
+    )
+
+    global_history = []
+    for step, event in enumerate(iterator, start=1):
+        if isinstance(event, GroupChatRunChatEvent):
+            speaker = str(event.content.speaker)
+            print(f"\n=== {speaker}'s turn ===")
+            _publish_task_parsing_progress(
+                state,
+                "turn_started",
+                step=step,
+                speaker=speaker,
+            )
+        elif isinstance(event, TextEvent):
+            sender = str(event.content.sender)
+            content = str(event.content.content)
+            print(content)
+            global_history.append({
+                "name": sender,
+                "content": content
+            })
+            _publish_task_parsing_progress(
+                state,
+                "message",
+                step=step,
+                sender=sender,
+                content_preview=content,
+            )
+        elif isinstance(event, InputRequestEvent):
+            prompt_text = str(event.content.prompt)
+            request_id = str(uuid.uuid4())
+            _publish_task_parsing_progress(
+                state,
+                "input_requested",
+                step=step,
+                request_id=request_id,
+                prompt=prompt_text,
+            )
+            # api call
+            # 1. wait for client input
+            user_input = _wait_for_user_input(request_id)
+            # 2. input from cli
+            # user_input = input(prompt_text)
+            event.content.respond(user_input)
+            _publish_task_parsing_progress(
+                state,
+                "input_submitted",
+                step=step,
+                input_length=len(user_input),
+                #user_input=user_input
+            )
+        elif isinstance(event, TerminationEvent):
+            _publish_task_parsing_progress(
+                state,
+                "termination",
+                step=step,
+                detail=event.content,
+            )
+        elif isinstance(event, RunCompletionEvent):
+            result_history = event.content.history
+            summary = event.content.summary
+            context_vars = event.content.context_variables
+            last_speaker = event.content.last_speaker
+            _publish_task_parsing_progress(
+                state,
+                "run_completion",
+                step=step,
+                history_length=len(result_history),
+                last_speaker=str(last_speaker) if last_speaker else None,
+                summary_preview=summary,
+            )
+        print(event)
+
+    return global_history
+
+def _publish_task_parsing_progress(
+    state: ResearchState,
+    progress_event: str,
+    **extra: Any,
+) -> None:
+    """Publish per-iteration progress when API runtime is active."""
+    project_id = state.get("project_id")
+    if not project_id:
+        return
+
+    app_module = sys.modules.get("researcher.api.app")
+    print("app_module in pub func", app_module)
+    if app_module is None:
+        return
+
+    fastapi_app = getattr(app_module, "app", None)
+    event_bus = None
+    if fastapi_app is not None:
+        event_bus = getattr(getattr(fastapi_app, "state", None), "event_bus", None)
+    if event_bus is None:
+        event_bus = getattr(app_module, "event_bus", None)
+    if event_bus is None:
+        return
+
+    payload = {
+        "event": "node_progress",
+        "project_id": project_id,
+        "node": "task_parsing",
+        "stage": "task_parsing",
+        "progress_event": progress_event,
+        "timestamp": datetime.now().isoformat(),
+    }
+    payload.update(extra)
+
+    try:
+        event_bus.publish(project_id, payload)
+    except Exception:
+        # Progress publishing must not break workflow execution.
+        pass
+
+def _wait_for_user_input(request_id: str):
+
+    app_module = sys.modules.get("researcher.api.app")
+
+    if not app_module:
+        raise RuntimeError("API runtime not available")
+
+    input_store = getattr(app_module, "input_store")
+
+    input_store.create(request_id)
+
+    user_input = input_store.wait_for_input(request_id)
+
+    return user_input
