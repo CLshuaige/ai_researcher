@@ -24,6 +24,7 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
+    iterable_group_chat
 )
 from researcher.prompts.templates import IDEA_PROPOSAL_PROMPT, IDEA_FORMATTER_PROMPT
 from researcher.exceptions import WorkflowError
@@ -117,6 +118,14 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         initial_message = IDEA_PROPOSAL_PROMPT.format(task=task, literature=literature_text)
         log_stage(workspace_dir, "hypothesis_construction", f"Running debate (max {max_iterations} rounds)")
 
+        if state["config"]["researcher"]["iterable"]:
+            result, context, last_agent = iterable_group_chat(
+                state,
+                max_rounds=max_iterations * 2 + 1,
+                enable_hitl=False,
+                pattern=pattern,
+                prompt=initial_message,
+            )
         result, context, last_agent = initiate_group_chat(
             pattern=pattern,
             messages=initial_message,

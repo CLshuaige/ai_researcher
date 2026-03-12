@@ -28,7 +28,8 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
-    save_markdown
+    save_markdown,
+    iterable_group_chat
 )
 from researcher.prompts.paper_writing import (
     outline_prompt,
@@ -431,11 +432,20 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
         if not skip_generation:
             log_stage(workspace_dir, "report_generation", "Starting report generation")
             log_stage(workspace_dir, "report_generation", "Generating paper outline")
-            result, context, last_agent = initiate_group_chat(
-                pattern=pattern,
-                messages=outline_prompt_text,
-                max_rounds=len(initial_context.get("outline_structure", {}).get("sections", [])) + 5 if initial_context.get("outline_structure") else 20
-            )
+            if state["config"]["researcher"]["iterable"]:
+                result, context, last_agent = iterable_group_chat(
+                    state,
+                    max_rounds=len(initial_context.get("outline_structure", {}).get("sections", [])) + 5 if initial_context.get("outline_structure") else 20,
+                    enable_hitl=False,
+                    pattern=pattern,
+                    prompt=outline_prompt_text,
+                )
+            else:
+                result, context, last_agent = initiate_group_chat(
+                    pattern=pattern,
+                    messages=outline_prompt_text,
+                    max_rounds=len(initial_context.get("outline_structure", {}).get("sections", [])) + 5 if initial_context.get("outline_structure") else 20
+                )
 
             save_agent_history(
                 workspace_dir=workspace_dir,

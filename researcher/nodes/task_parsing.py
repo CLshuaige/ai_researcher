@@ -104,7 +104,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
             agents=agents_list,
             user_agent=user_agent,
             context_variables=initial_context,
-            #group_after_work=TerminateTarget(),
+            group_after_work=TerminateTarget(),
             group_manager_args={"llm_config": llm_config}
         )
 
@@ -121,7 +121,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         max_rounds = max_iterations * 2 + 1 if enable_hitl else 4
         
         if state["config"]["researcher"]["iterable"]:
-            global_history = iterable_group_chat(
+            result, context, last_agent = iterable_group_chat(
                 state,
                 max_rounds=max_rounds,
                 enable_hitl=enable_hitl,
@@ -134,13 +134,12 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
                 messages=prompt,
                 max_rounds=max_rounds
             )
-            global_history = result.chat_history
 
 
         # print(f"global_history: {global_history}")
         # Extract task from formatter's last message
         task = None
-        for msg in reversed(global_history):
+        for msg in reversed(result.chat_history):
             if msg.get("name") == formatter.name and msg.get("content"):
                 task = msg["content"]
                 break
@@ -154,7 +153,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="task_parsing",
-            messages=global_history,
+            messages=result.chat_history,
             agent_chat_messages={
                 asker.name: asker.chat_messages,
                 formatter.name: formatter.chat_messages

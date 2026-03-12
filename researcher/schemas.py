@@ -252,3 +252,7 @@ class LiteratureReview(BaseModel):
                 lines.append(f"\n{item.abstract}\n\n")
 
         return "".join(lines)
+
+class ChatResult(BaseModel):
+    """Chat result for group chat"""
+    chat_history: List[Dict[str, Any]]

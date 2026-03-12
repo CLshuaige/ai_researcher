@@ -8,10 +8,11 @@ import re
 import sys
 import uuid
 
-from autogen.events.agent_events import GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent
+from autogen.events.agent_events import GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent, ErrorEvent
 from autogen.agentchat import run_group_chat_iter
 
 from researcher.state import ResearchState
+from researcher.schemas import ChatResult
 
 #from researcher.config import config
 from researcher.exceptions import WorkflowError
@@ -413,7 +414,7 @@ def iterable_group_chat(
         pattern=pattern,
         messages=prompt,
         max_rounds=max_rounds,
-        yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent]
+        yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent, ErrorEvent]
     )
 
     global_history = []
@@ -487,7 +488,13 @@ def iterable_group_chat(
                 summary_preview=summary,
             )
 
-    return global_history
+    result = ChatResult(chat_history=global_history)
+    print(result)
+    context = pattern.context_variables
+    #last_agent = pattern.last_agent
+    print(pattern)
+    print(f"context: {context}")
+    return result, context, None
 
 def _publish_task_parsing_progress(
     state: ResearchState,

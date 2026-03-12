@@ -24,6 +24,7 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
+    iterable_group_chat
 )
 from researcher.prompts.templates import METHOD_PROPOSAL_PROMPT, METHOD_FORMATTER_PROMPT
 from researcher.exceptions import WorkflowError
@@ -118,11 +119,20 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         initial_message = METHOD_PROPOSAL_PROMPT.format(idea=idea_content, task=task)
         log_stage(workspace_dir, "method_design", f"Running debate (max {max_iterations} rounds)")
 
-        result, context, last_agent = initiate_group_chat(
-            pattern=pattern,
-            messages=initial_message,
-            max_rounds=max_iterations * 2 + 1
-        )
+        if state["config"]["researcher"]["iterable"]:
+            result, context, last_agent = iterable_group_chat(
+                state,
+                max_rounds=max_iterations * 2 + 1,
+                enable_hitl=False,
+                pattern=pattern,
+                prompt=initial_message,
+            )
+        else:
+            result, context, last_agent = initiate_group_chat(
+                pattern=pattern,
+                messages=initial_message,
+                max_rounds=max_iterations * 2 + 1
+            )
 
         save_agent_history(
             workspace_dir=workspace_dir,

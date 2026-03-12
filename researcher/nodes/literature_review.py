@@ -26,6 +26,7 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     save_agent_history,
+    iterable_group_chat,
 )
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
 from researcher.exceptions import WorkflowError
@@ -265,11 +266,20 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
 
-        result, context, last_agent = initiate_group_chat(
-            pattern=pattern,
-            messages=prompt,
-            max_rounds=10
-        )
+        if state["config"]["researcher"]["iterable"]:
+            result, context, last_agent = iterable_group_chat(
+                state,
+                max_rounds=10,
+                enable_hitl=False,
+                pattern=pattern,
+                prompt=prompt,
+            )
+        else:
+            result, context, last_agent = initiate_group_chat(
+                pattern=pattern,
+                messages=prompt,
+                max_rounds=10
+            )
 
         # Extract papers and synthesis from messages
         literature_items = []

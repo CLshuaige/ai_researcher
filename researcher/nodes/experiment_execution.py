@@ -32,6 +32,7 @@ from researcher.utils import (
     deduplicate_long_repeats,
     save_json,
     load_json,
+    iterable_group_chat
 )
 from researcher.prompts.templates import (
     RESULT_ANALYSIS_PROMPT,
@@ -352,11 +353,20 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         {"role": "user", "content": context_prompt + first_step_prompt},
         #{"role": "user", "content": first_step_prompt}
     ]
-    result, context, _ = initiate_group_chat(
-        pattern=pattern,
-        messages=initial_messages,
-        max_rounds=len(execution_order) * (max_retries + 2) + 5,
-    )
+    if state["config"]["researcher"]["iterable"]:
+        result, context, last_agent = iterable_group_chat(
+            state,
+            max_rounds=len(execution_order) * (max_retries + 2) + 5,
+            enable_hitl=False,
+            pattern=pattern,
+            prompt=initial_messages,
+        )
+    else:
+        result, context, _ = initiate_group_chat(
+            pattern=pattern,
+            messages=initial_messages,
+            max_rounds=len(execution_order) * (max_retries + 2) + 5,
+        )
 
     # Extract analysis from analyst messages (no minimum length requirement).
     analyst_messages = [
