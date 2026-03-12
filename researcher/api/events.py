@@ -1,36 +1,42 @@
-from __future__ import annotations
-
-from queue import SimpleQueue
+import asyncio
 from threading import Lock
 from typing import Any, Dict, Tuple
 from uuid import uuid4
 
 
 class ProjectEventBus:
-    """Thread-safe in-memory pub/sub for project-scoped events."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self._lock = Lock()
-        self._queues: Dict[str, Dict[str, SimpleQueue]] = {}
+        self._queues: Dict[str, Dict[str, asyncio.Queue]] = {}
 
-    def subscribe(self, project_id: str) -> Tuple[str, SimpleQueue]:
+    def subscribe(self, project_id: str) -> Tuple[str, asyncio.Queue]:
+
         token = uuid4().hex
-        queue: SimpleQueue = SimpleQueue()
+        queue: asyncio.Queue = asyncio.Queue()
+
         with self._lock:
             self._queues.setdefault(project_id, {})[token] = queue
+
         return token, queue
 
-    def unsubscribe(self, project_id: str, token: str) -> None:
+    def unsubscribe(self, project_id: str, token: str):
+
         with self._lock:
-            subscribers = self._queues.get(project_id)
-            if not subscribers:
+            subs = self._queues.get(project_id)
+
+            if not subs:
                 return
-            subscribers.pop(token, None)
-            if not subscribers:
+
+            subs.pop(token, None)
+
+            if not subs:
                 self._queues.pop(project_id, None)
 
-    def publish(self, project_id: str, event: Dict[str, Any]) -> None:
+    def publish(self, project_id: str, event: Dict[str, Any]):
+
         with self._lock:
             subscribers = list(self._queues.get(project_id, {}).values())
-        for queue in subscribers:
-            queue.put(event)
+
+        for q in subscribers:
+            q.put_nowait(event)

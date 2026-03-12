@@ -204,43 +204,28 @@ async def get_logs(project_id: str, tail_lines: int = Query(default=200, ge=1, l
 # api-14
 @app.websocket("/api/v1/projects/{project_id}/events")
 async def project_events(project_id: str, websocket: WebSocket):
+
     await websocket.accept()
 
     token, queue = event_bus.subscribe(project_id)
 
-    async def send_events():
+    try:
         while True:
+
             try:
-                event = await asyncio.to_thread(queue.get)
+                event = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=15
+                )
+
                 await websocket.send_json(event)
 
-            except Exception:
-                break
+            except asyncio.TimeoutError:
 
-    async def heartbeat():
-        while True:
-            await asyncio.sleep(15)
-            await websocket.send_json({
-                "event": "heartbeat",
-                "project_id": project_id,
-            })
-
-    async def receive_inputs():
-        while True:
-            data = await websocket.receive_json()
-
-            if data.get("event") == "input_response":
-                request_id = data["request_id"]
-                user_input = data["input"]
-
-                input_store.resolve(request_id, user_input)
-
-    try:
-        sender = asyncio.create_task(send_events())
-        hb = asyncio.create_task(heartbeat())
-        receiver = asyncio.create_task(receive_inputs())
-
-        await asyncio.gather(sender, receiver)
+                await websocket.send_json({
+                    "event": "heartbeat",
+                    "project_id": project_id,
+                })
 
     except WebSocketDisconnect:
         pass

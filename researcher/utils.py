@@ -418,6 +418,7 @@ def iterable_group_chat(
 
     global_history = []
     for step, event in enumerate(iterator, start=1):
+        print(event)
         if isinstance(event, GroupChatRunChatEvent):
             speaker = str(event.content.speaker)
             print(f"\n=== {speaker}'s turn ===")
@@ -470,7 +471,7 @@ def iterable_group_chat(
                 state,
                 "termination",
                 step=step,
-                detail=event.content,
+                detail=event.content.termination_reason,
             )
         elif isinstance(event, RunCompletionEvent):
             result_history = event.content.history
@@ -485,7 +486,6 @@ def iterable_group_chat(
                 last_speaker=str(last_speaker) if last_speaker else None,
                 summary_preview=summary,
             )
-        print(event)
 
     return global_history
 
