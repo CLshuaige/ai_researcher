@@ -212,8 +212,6 @@ class APIProjectService:
         slug = self._safe_slug(request.project_name)
         project_id = f"{timestamp}_{slug}_{uuid4().hex[:8]}"
         workspace_dir = self.base_dir / project_id
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-
         config_path = Path(request.config_path) if request.config_path else None
         config = load_global_config(config_path=config_path)
         config.setdefault("researcher", {})
@@ -233,6 +231,8 @@ class APIProjectService:
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
         }
+        
+        workspace_dir.mkdir(parents=True, exist_ok=True)
         save_session_metadata(workspace_dir, session_data)
 
         index = self._load_index()

@@ -43,6 +43,13 @@ researcher:
   literature_review:
     mode: "basic"
     num_papers: 5
+    # sources: ["arxiv", "pubmed", "semantic_scholar", "openalex", "crossref", "perplexity"]  # All sources
+    # sources: ["arxiv", "pubmed", "openalex"]  # Sources without API
+    sources: ["arxiv"]   # Common sources
+    api:
+      semantic_scholar_api_key: ""
+      pubmed_api_key: ""
+      perplexity_api_key: ""
   hypothesis_construction:
     mode: "basic"
     max_debate_iterations: 5
