@@ -636,81 +636,91 @@ def _extract_selected_idea(idea_content: str) -> str:
 
 
 def _parse_literature_to_bibtex(workspace_dir: Path) -> tuple[str, List[Dict[str, str]]]:
-    """Parse literature data from arxiv_cache/*_metadata.json files to BibTeX format and extract cite keys"""
+    """Parse literature data from literature/*_cache/*_metadata.json files to BibTeX format and extract cite keys"""
     bib_entries = []
     cite_keys_info = []
 
-    arxiv_cache_dir = workspace_dir / "literature" / "arxiv_cache"
-    if not arxiv_cache_dir.exists():
+    literature_dir = workspace_dir / "literature"
+    if not literature_dir.exists():
         return "", []
-    
-    metadata_files = sorted(arxiv_cache_dir.glob("*_metadata.json"))
-    
-    if not metadata_files:
-        return "", []
-    
-    seen_arxiv_ids = set()  # Avoid duplicates across multiple metadata files
-    
-    for metadata_file in metadata_files:
-        try:
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
-            
-            papers = cache_data.get("papers", [])
-            for paper in papers:
-                arxiv_id = paper.get("arxiv_id", "")
-                if not arxiv_id or arxiv_id in seen_arxiv_ids:
-                    continue
-                seen_arxiv_ids.add(arxiv_id)
-                
-                title = paper.get("title", "")
-                authors_list = paper.get("authors", [])
-                year = paper.get("year")
-                url = paper.get("url", "")
-                
-                if not title:
-                    continue
-                
-                # Generate cite key: firstauthor_year_firstword
-                if authors_list and len(authors_list) > 0:
-                    first_author = authors_list[0].split(',')[0].strip() if isinstance(authors_list[0], str) else str(authors_list[0]).split(',')[0].strip()
-                else:
-                    first_author = "unknown"
-                
-                first_word = re.sub(r'[^a-zA-Z]', '', title.split()[0].lower()) if title.split() else "paper"
-                year_str = str(year) if year else "unknown"
-                cite_key = f"{first_author.lower().replace(' ', '')}{year_str}{first_word}"
-                
-                # Format authors for BibTeX
-                if isinstance(authors_list, list):
-                    authors_bib = " and ".join([str(a).strip() for a in authors_list])
-                else:
-                    authors_bib = "Unknown"
-                
-                # Generate BibTeX entry
-                bib_entry = (
-                    f"@article{{{cite_key},\n"
-                    f"  title={{{title}}},\n"
-                    f"  author={{{authors_bib}}},\n"
-                )
-                if year:
-                    bib_entry += f"  year={{{year}}},\n"
-                if url:
-                    bib_entry += f"  url={{{url}}},\n"
-                bib_entry += f"  note={{arXiv:{arxiv_id}}}\n"
-                bib_entry += "}"
-                bib_entries.append(bib_entry)
 
-                # Store cite key info for prompt
-                cite_keys_info.append({
-                    "key": cite_key,
-                    "title": title,
-                    "authors": ", ".join(authors_list) if isinstance(authors_list, list) else "Unknown",
-                    "year": str(year) if year else "Unknown"
-                })
-        except Exception as e:
-            # Skip invalid files but continue processing others
-            continue
+    cache_dirs = sorted(
+        [path for path in literature_dir.iterdir() if path.is_dir() and path.name.endswith("_cache")]
+    )
+    if not cache_dirs:
+        return "", []
+
+    seen_identifier = set()
+
+    for cache_dir in cache_dirs:
+        source_hint = cache_dir.name[:-6] if cache_dir.name.endswith("_cache") else cache_dir.name
+        metadata_files = sorted(cache_dir.glob("*_metadata.json"))
+        for metadata_file in metadata_files:
+            try:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+
+                papers = cache_data.get("papers", [])
+                for paper in papers:
+                    title = paper.get("title", "")
+                    if not title:
+                        continue
+
+                    source = paper.get("source") or source_hint
+                    authors_list = paper.get("authors", [])
+                    year = paper.get("year")
+                    url = paper.get("url", "")
+                    arxiv_id = paper.get("arxiv_id", "")
+                    external_id = paper.get("external_id", "")
+                    identifier = arxiv_id or external_id or url
+                    if not identifier:
+                        continue
+                    if identifier in seen_identifier:
+                        continue
+                    seen_identifier.add(identifier)
+
+                    # Generate cite key: firstauthor_year_firstword
+                    if authors_list and len(authors_list) > 0:
+                        first_author = authors_list[0].split(',')[0].strip() if isinstance(authors_list[0], str) else str(authors_list[0]).split(',')[0].strip()
+                    else:
+                        first_author = "unknown"
+
+                    first_word = re.sub(r'[^a-zA-Z]', '', title.split()[0].lower()) if title.split() else "paper"
+                    year_str = str(year) if year else "unknown"
+                    base_key = f"{first_author.lower().replace(' ', '')}{year_str}{first_word}"
+                    cite_key = f"{source}_{base_key}"
+
+                    # Format authors for BibTeX
+                    if isinstance(authors_list, list):
+                        authors_bib = " and ".join([str(a).strip() for a in authors_list]) or "Unknown"
+                    else:
+                        authors_bib = "Unknown"
+
+                    # Generate BibTeX entry
+                    entry_type = "misc"
+                    bib_entry = (
+                        f"@{entry_type}{{{cite_key},\n"
+                        f"  title={{{title}}},\n"
+                        f"  author={{{authors_bib}}},\n"
+                    )
+                    if year:
+                        bib_entry += f"  year={{{year}}},\n"
+                    if url:
+                        bib_entry += f"  url={{{url}}},\n"
+                    bib_entry += f"  note={{Source: {source}}}\n"
+                    bib_entry += "}"
+                    bib_entries.append(bib_entry)
+
+                    # Store cite key info for prompt
+                    cite_keys_info.append({
+                        "key": cite_key,
+                        "title": title,
+                        "authors": ", ".join(authors_list) if isinstance(authors_list, list) else "Unknown",
+                        "year": str(year) if year else "Unknown"
+                    })
+            except Exception:
+                # Skip invalid files but continue processing others
+                continue
 
     bib_content = "\n\n".join(bib_entries) if bib_entries else ""
     return bib_content, cite_keys_info
@@ -1285,4 +1295,3 @@ def _add_citations_to_paper(
             continue
     
     return "\n\n".join(all_bib_entries)
-

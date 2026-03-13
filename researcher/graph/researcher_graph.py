@@ -5,6 +5,7 @@ from researcher.state import ResearchState
 from researcher.nodes import (
     # task nodes
     task_parsing_node,
+    source_ingestion_node,
     hypothesis_construction_node,
     method_design_node,
     literature_review_node,
@@ -25,6 +26,7 @@ def build_researcher_graph() -> StateGraph:
 
     # Define nodes
     workflow.add_node("initialization"      , init_node)
+    workflow.add_node("source_ingestion"    , source_ingestion_node)
     workflow.add_node("task_parsing"        , task_parsing_node)
     workflow.add_node("literature_review"   , literature_review_node)
     workflow.add_node("hypothesis_construction", hypothesis_construction_node)
@@ -36,6 +38,7 @@ def build_researcher_graph() -> StateGraph:
     # Define edges
     workflow.add_edge(START                 , "initialization")
     workflow.add_conditional_edges("initialization", router_node)
+    workflow.add_conditional_edges("source_ingestion"    , router_node)
     workflow.add_conditional_edges("task_parsing"        , router_node)
     workflow.add_conditional_edges("literature_review"   , router_node)
     workflow.add_conditional_edges("hypothesis_construction", router_node)

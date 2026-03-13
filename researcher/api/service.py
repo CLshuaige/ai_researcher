@@ -52,6 +52,7 @@ from researcher.api.schemas import (
 
 
 NODE_ORDER = [
+    "source_ingestion",
     "task_parsing",
     "literature_review",
     "hypothesis_construction",
@@ -151,6 +152,10 @@ class APIProjectService:
 
     def _artifact_candidates_for_node(self, node_name: str) -> List[str]:
         mapping = {
+            "source_ingestion": [
+                "knowledge/knowledge_summary.md",
+                "knowledge/metadata.json",
+            ],
             "task_parsing": ["task.md"],
             "literature_review": ["literature.md"],
             "hypothesis_construction": ["idea.md"],
@@ -178,7 +183,19 @@ class APIProjectService:
         output["workspace_dir"] = str(workspace_dir)
 
         stage = str(delta.get("stage") or node_name)
+<<<<<<< HEAD
         status = str(delta.get("status") or "unknown")
+=======
+        if "status" in delta:
+            status = str(delta.get("status"))
+        elif delta.get("error"):
+            status = "failed"
+        elif delta:
+            status = "completed"
+        else:
+            status = "unknown"
+
+>>>>>>> 3546a428a5447630cc6a122fe902e6238956a227
         return NodeResult(
             node=node_name,
             stage=stage,
@@ -199,8 +216,6 @@ class APIProjectService:
         slug = self._safe_slug(request.project_name)
         project_id = f"{timestamp}_{slug}_{uuid4().hex[:8]}"
         workspace_dir = self.base_dir / project_id
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-
         config_path = Path(request.config_path) if request.config_path else None
         config = load_global_config(config_path=config_path)
         config.setdefault("researcher", {})
@@ -220,6 +235,8 @@ class APIProjectService:
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
         }
+        
+        workspace_dir.mkdir(parents=True, exist_ok=True)
         save_session_metadata(workspace_dir, session_data)
 
         index = self._load_index()

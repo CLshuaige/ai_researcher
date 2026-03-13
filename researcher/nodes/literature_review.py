@@ -1,8 +1,7 @@
-from typing import Dict, Any, List, Annotated, Optional
-from pathlib import Path
+from typing import Dict, Any, List, Annotated
 
 from autogen import ConversableAgent, ContextExpression
-from autogen.agentchat import initiate_group_chat, register_function
+from autogen.agentchat import initiate_group_chat
 from autogen.agentchat.group.patterns import DefaultPattern
 from autogen.agentchat.group import (
     AgentTarget,
@@ -20,7 +19,6 @@ from researcher.schemas import LiteratureReview, LiteratureItem
 from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent
 from researcher.utils import (
     save_markdown,
-    save_json,
     log_stage,
     get_artifact_path,
     load_artifact_from_file,
@@ -30,6 +28,7 @@ from researcher.utils import (
 )
 from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
 from researcher.exceptions import WorkflowError
+from researcher.integrations.literature_search import search_literature
 
 
 def literature_review_node(state: ResearchState) -> Dict[str, Any]:
@@ -44,106 +43,33 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         config = state["config"]["researcher"]["literature_review"]
         num_papers = config["num_papers"]
+        sources = [s.lower() for s in config.get("sources", ["arxiv"])]
+        api_config = config.get("api") or {}
 
         llm_config = get_llm_config()
 
-        def search_arxiv_papers(
+        def search_literature_papers(
             context_variables: ContextVariables,
-            query: Annotated[str, "Search query for arxiv academic database"],
-            max_results: Annotated[int, "Maximum number of papers to retrieve"] = 5,
+            query: Annotated[str, "Search query for academic databases"],
+            max_results: Annotated[int, "Maximum number of papers to retrieve per source"] = 5,
         ) -> dict:
-            """Search arxiv for academic papers, download and cache PDFs, return paper metadata"""
             try:
-                import arxiv
-                from datetime import datetime
-
-                cache_dir = workspace_dir / "literature" / "arxiv_cache"
-                cache_dir.mkdir(parents=True, exist_ok=True)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                search = arxiv.Search(
+                results = search_literature(
                     query=query,
                     max_results=max_results,
-                    sort_by=arxiv.SortCriterion.Relevance
+                    sources=sources,
+                    workspace_dir=workspace_dir,
+                    api_config=api_config,
                 )
 
-                papers = []
-                papers_text_parts = []
-                cache_metadata = {
-                    "timestamp": timestamp,
-                    "query": query,
-                    "max_results": max_results,
-                    "papers": []
-                }
-
-                for result in search.results():
-                    arxiv_id = result.entry_id.split('/')[-1]
-                    paper_data = {
-                        "title": result.title,
-                        "authors": [author.name for author in result.authors],
-                        "abstract": result.summary,
-                        "url": result.entry_id,
-                        "year": result.published.year if result.published else None,
-                        "arxiv_id": arxiv_id
-                    }
-                    papers.append(paper_data)
-
-                    papers_text_parts.append(
-                        f"Title: {result.title}\n"
-                        f"Authors: {', '.join([a.name for a in result.authors])}\n"
-                        f"Abstract: {result.summary}\n"
-                    )
-
-                    # Cache PDF
-                    pdf_filename = None
-                    try:
-                        pdf_filename = f"{timestamp}_{arxiv_id}.pdf"
-                        result.download_pdf(dirpath=str(cache_dir), filename=pdf_filename)
-                        paper_data["pdf_cached"] = pdf_filename
-                    except Exception:
-                        paper_data["pdf_cached"] = None
-
-                    cache_metadata["papers"].append({
-                        "arxiv_id": arxiv_id,
-                        "title": result.title,
-                        "authors": [author.name for author in result.authors],
-                        "abstract": result.summary,
-                        "year": result.published.year if result.published else None,
-                        "query": query,
-                        "pdf_file": pdf_filename,
-                        "url": result.entry_id
-                    })
-
-                if cache_metadata["papers"]:
-                    metadata_path = cache_dir / f"{timestamp}_metadata.json"
-                    save_json(cache_metadata, metadata_path)
-
-                # Format papers text
-                papers_text = "\n\n---\n\n".join(papers_text_parts) if papers_text_parts else "No papers found"
-
                 context_variables["state"] = "searched"
-                context_variables["searching_results"].append({
-                    "success": True,
-                    "papers": papers,
-                    "query": query,
-                    "formatted_text": papers_text
-                })
+                context_variables["searching_results"].extend(results)
 
-
-                # return {
-                #     "success": True,
-                #     "papers": papers,
-                #     "query": query,
-                #     "formatted_text": papers_text
-                # }
                 return ReplyResult(
                     message="Searching complete.",
-                    #target=FunctionTarget(format_papers_for_summarizer),
                     context_variables=context_variables
                 )
 
-            except ImportError:
-                return {"success": False, "error": "arxiv package not installed"}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
@@ -215,7 +141,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             human_input_mode="NEVER",
             system_message="Initiate the tool call based on the received search keywords and other information",
             llm_config=llm_config_tool,
-            functions=[search_arxiv_papers]
+            functions=[search_literature_papers]
         )
 
         # register_function(
@@ -238,17 +164,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             context_variables=initial_variables
         )
 
-        def format_papers_for_summarizer(output: any, ctx: ContextVariables):
-            message = f"""{LITERATURE_SUMMARY_PROMPT.format(
-                papers="Extract and synthesize the papers from the search results above (look for formatted_text in the tool results).",
-                task=task
-            )}"""
-            
-            return FunctionTargetResult(
-                target=AgentTarget(summarizer),
-                messages=message,
-                context_variables=ctx
-            )
 
         searcher.handoffs.set_after_work(AgentTarget(executor))
         executor.handoffs.add_context_condition(

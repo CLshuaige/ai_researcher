@@ -4,6 +4,7 @@ from langgraph.graph import END
 
 def router_node(state: ResearchState) -> str:
     valid_nodes = {
+        "source_ingestion",
         "task_parsing",
         "literature_review",
         "hypothesis_construction",

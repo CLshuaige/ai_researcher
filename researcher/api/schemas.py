@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 # node name list
 NODE_ORDER = [
+    "source_ingestion",
     "task_parsing",
     "literature_review",
     "hypothesis_construction",

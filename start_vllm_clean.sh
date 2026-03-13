@@ -4,7 +4,7 @@ set -euo pipefail
 ############################
 # 配置区（按需修改）
 ############################
-PORT=8001
+PORT=8008
 VLLM_PATTERN="vllm serve"
 PYTHON_CLIENT_PATTERN="python -m main"
 WAIT_SECONDS=8

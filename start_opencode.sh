@@ -42,12 +42,12 @@ fi
 ############################
 # 3. Read port from config
 ############################
-if ! PORT=$(python3 -c "import json; print(json.load(open('$CONFIG_PATH'))['server']['port'])"); then
-  log "ERROR: Could not read port from config file: $CONFIG_PATH"
+if ! read -r HOST PORT < <(python3 -c "import json; cfg=json.load(open('$CONFIG_PATH')); print(cfg['server']['hostname'], cfg['server']['port'])"); then
+  log "ERROR: Could not read host/port from config file: $CONFIG_PATH"
   exit 1
 fi
 
-log "Using port $PORT from configuration"
+log "Using host $HOST and port $PORT from configuration"
 
 ############################
 # 4. Clean up port
@@ -92,4 +92,5 @@ log "Starting OpenCode server..."
 export OPENCODE_CONFIG="$CONFIG_PATH"
 
 exec opencode serve \
-  --hostname 127.0.0.1
+  --hostname "$HOST" \
+  --port "$PORT"
