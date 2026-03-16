@@ -20,7 +20,7 @@ def get_opencode_config(config_path: Path | None = None) -> Dict[str, Any]:
 def get_opencode_server_url() -> str:
     config = get_opencode_config()
     server_config = config.get("server", {})
-    host = server_config.get("hostname", "127.0.0.1")
+    host = server_config.get("hostname", "0.0.0.0")
     port = server_config.get("port", 4096)
     return f"http://{host}:{port}"
 

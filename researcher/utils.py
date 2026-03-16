@@ -419,10 +419,11 @@ def iterable_group_chat(
 
     global_history = []
     for step, event in enumerate(iterator, start=1):
-        print(event)
         if isinstance(event, GroupChatRunChatEvent):
             speaker = str(event.content.speaker)
-            print(f"\n=== {speaker}'s turn ===")
+            print(f"\n{'─' * 60}")
+            print(f"🎭 [{step}] {speaker}'s turn")
+            print('─' * 60)
             _publish_task_parsing_progress(
                 state,
                 "turn_started",
@@ -432,7 +433,7 @@ def iterable_group_chat(
         elif isinstance(event, TextEvent):
             sender = str(event.content.sender)
             content = str(event.content.content)
-            print(content)
+            print(f"💬 {sender}: {content}")
             global_history.append({
                 "name": sender,
                 "content": content
@@ -489,11 +490,14 @@ def iterable_group_chat(
             )
 
     result = ChatResult(chat_history=global_history)
-    print(result)
     context = pattern.context_variables
-    #last_agent = pattern.last_agent
-    print(pattern)
-    print(f"context: {context}")
+
+    # 打印总结
+    print(f"\n{'=' * 60}")
+    print(f"✅ Chat completed - {len(global_history)} messages")
+    print(f"📊 Context variables: {list(context.keys()) if context else 'None'}")
+    print('=' * 60)
+
     return result, context, None
 
 def _publish_task_parsing_progress(
@@ -507,7 +511,6 @@ def _publish_task_parsing_progress(
         return
 
     app_module = sys.modules.get("researcher.api.app")
-    print("app_module in pub func", app_module)
     if app_module is None:
         return
 

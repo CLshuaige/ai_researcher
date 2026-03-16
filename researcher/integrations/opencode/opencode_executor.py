@@ -33,7 +33,7 @@ class OpenCodeExecutor:
 
     def __init__(
         self,
-        opencode_base_url: str = "http://localhost:4096",
+        opencode_base_url: str = "http://0.0.0.0:4096",
         timeout: float = 300.0,
         config_file: Optional[Path] = None,
         provider_id: Optional[str] = None,

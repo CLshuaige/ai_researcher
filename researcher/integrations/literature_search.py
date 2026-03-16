@@ -173,31 +173,173 @@ def _openalex_abstract(inverted_index: Optional[Dict[str, List[int]]]) -> str:
     return " ".join([w for w in words if w])
 
 
-def _search_openalex_papers(query: str, max_results: int) -> List[Dict[str, Any]]:
+def _search_openalex_papers(
+    query: str,
+    max_results: int,
+    workspace_dir: Path,
+    api_key: str = "",
+) -> List[Dict[str, Any]]:
+    """Search OpenAlex for papers and download PDFs if available.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results to return
+        workspace_dir: Directory for caching PDFs
+        api_key: Optional OpenAlex API key for higher rate limits
+
+    Returns:
+        List of paper metadata dictionaries
+    """
+    import time
+
     url = "https://api.openalex.org/works"
-    params = {"search": query}
-    resp = requests.get(url, params=params, timeout=20)
-    resp.raise_for_status()
-    data = resp.json().get("results", [])
+
+    # Build search parameters
+    params: Dict[str, Any] = {
+        "search": query,
+        "per_page": min(max_results, 200),  # OpenAlex max per_page is 200
+    }
+    if api_key:
+        params["api_key"] = api_key
+
+    # Add fields to request for efficiency
+    params["select"] = "id,display_name,authorships,abstract_inverted_index,publication_year,primary_location,open_access,doi"
+
+    all_results = []
+    cursor = None
+
+    # Paginate to get all requested results
+    while len(all_results) < max_results:
+        if cursor:
+            params["cursor"] = cursor
+
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = data.get("results", [])
+            if not results:
+                break
+
+            all_results.extend(results)
+
+            # Check if there are more pages
+            meta = data.get("meta", {})
+            next_cursor = meta.get("next_cursor")
+            if not next_cursor or len(all_results) >= max_results:
+                break
+            cursor = next_cursor
+
+            # Rate limiting: be polite to the API
+            time.sleep(0.1)
+
+        except requests.exceptions.RequestException as e:
+            print(f"OpenAlex API request failed: {e}")
+            break
+
+    # Limit to max_results
+    all_results = all_results[:max_results]
+
+    # Setup cache directory for PDFs
+    cache_dir = workspace_dir / "literature" / "openalex_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     papers = []
-    for item in data[:max_results]:
+    for idx, item in enumerate(all_results, 1):
+        # Extract authors
         authors = []
         for auth in item.get("authorships", []):
             name = auth.get("author", {}).get("display_name")
             if name:
                 authors.append(name)
+
+        # Reconstruct abstract from inverted index
         abstract = _openalex_abstract(item.get("abstract_inverted_index"))
-        url_value = item.get("id") or item.get("primary_location", {}).get("landing_page_url", "")
-        papers.append({
+
+        # Get URL (prefer DOI landing page, then OpenAlex URL)
+        primary_loc = item.get("primary_location", {}) or {}
+        url_value = primary_loc.get("landing_page_url") or item.get("id", "")
+
+        # Get Open Access PDF URL if available
+        open_access = item.get("open_access", {}) or {}
+        pdf_url = open_access.get("oa_url") or primary_loc.get("pdf_url")
+
+        # Extract external IDs
+        external_id = item.get("id", "")
+        doi = item.get("doi", "")
+
+        paper_data = {
             "title": item.get("display_name", ""),
             "authors": authors,
             "abstract": abstract,
             "url": url_value,
             "year": item.get("publication_year"),
             "source": "openalex",
-            "external_id": item.get("id"),
-        })
+            "external_id": external_id,
+            "doi": doi,
+            "pdf_url": pdf_url,
+            "is_oa": open_access.get("is_oa", False) if open_access else False,
+        }
+        print(paper_data)
+
+        # Try to download PDF if available
+        pdf_filename = None
+        if pdf_url:
+            try:
+                # Create a safe filename from the work ID
+                work_id = external_id.split("/")[-1] if external_id else f"paper_{idx}"
+                pdf_filename = f"{timestamp}_{work_id}.pdf"
+                pdf_path = cache_dir / pdf_filename
+
+                # Download PDF with timeout and headers
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0; mailto:research@example.com)"
+                }
+                pdf_resp = requests.get(pdf_url, headers=headers, timeout=30, stream=True)
+                pdf_resp.raise_for_status()
+
+                # Verify it's actually a PDF
+                content_type = pdf_resp.headers.get("content-type", "").lower()
+                content_length = pdf_resp.headers.get("content-length")
+                size_mb = int(content_length) / (1024 * 1024) if content_length else "unknown"
+
+                if "pdf" in content_type or pdf_url.endswith(".pdf"):
+                    # Check file size (max 50MB to prevent disk filling)
+                    if content_length and int(content_length) > 50 * 1024 * 1024:
+                        paper_data["pdf_cached"] = None
+                        paper_data["pdf_error"] = f"PDF too large ({size_mb:.1f}MB > 50MB limit)"
+                    else:
+                        with open(pdf_path, "wb") as f:
+                            for chunk in pdf_resp.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                        paper_data["pdf_cached"] = pdf_filename
+                        paper_data["pdf_path"] = str(pdf_path)
+                        paper_data["pdf_size_mb"] = round(size_mb, 2) if isinstance(size_mb, float) else None
+                else:
+                    paper_data["pdf_cached"] = None
+                    paper_data["pdf_error"] = f"Not a PDF (content-type: {content_type})"
+
+            except requests.exceptions.Timeout:
+                paper_data["pdf_cached"] = None
+                paper_data["pdf_error"] = "Download timeout (30s) - PDF may be too large or server slow"
+            except requests.exceptions.HTTPError as e:
+                paper_data["pdf_cached"] = None
+                paper_data["pdf_error"] = f"HTTP error {e.response.status_code if e.response else 'unknown'} - PDF may require authentication or be unavailable"
+            except requests.exceptions.ConnectionError:
+                paper_data["pdf_cached"] = None
+                paper_data["pdf_error"] = "Connection error - PDF server unreachable"
+            except Exception as e:
+                paper_data["pdf_cached"] = None
+                paper_data["pdf_error"] = f"Download failed: {type(e).__name__}: {str(e)[:100]}"
+        else:
+            paper_data["pdf_cached"] = None
+            paper_data["pdf_error"] = "Not open access - no PDF URL available"
+
+        papers.append(paper_data)
+
     return papers
 
 
@@ -280,11 +422,34 @@ def _cache_metadata(
     cache_dir = workspace_dir / "literature" / f"{source}_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Calculate PDF download statistics
+    pdf_stats = {
+        "total_papers": len(papers),
+        "open_access_count": sum(1 for p in papers if p.get("is_oa")),
+        "pdf_downloaded": sum(1 for p in papers if p.get("pdf_cached")),
+        "pdf_failed": sum(1 for p in papers if p.get("pdf_error")),
+        "pdf_not_available": sum(1 for p in papers if not p.get("pdf_url")),
+    }
+
+    # Collect failed downloads with reasons
+    failed_downloads = [
+        {
+            "title": p.get("title", "")[:100],
+            "external_id": p.get("external_id", ""),
+            "error": p.get("pdf_error", "Unknown error"),
+        }
+        for p in papers
+        if p.get("pdf_error")
+    ]
+
     payload = {
         "timestamp": timestamp,
         "query": query,
         "max_results": max_results,
         "source": source,
+        "pdf_statistics": pdf_stats,
+        "failed_downloads": failed_downloads,
         "papers": papers,
     }
     metadata_path = cache_dir / f"{timestamp}_metadata.json"
@@ -303,12 +468,14 @@ def search_literature(
     pubmed_api_key = api_config.get("pubmed_api_key", "")
     perplexity_api_key = api_config.get("perplexity_api_key", "")
 
+    openalex_api_key = api_config.get("openalex_api_key", "")
+
     normalized_sources = [source.lower() for source in sources]
     handlers = {
         "arxiv": lambda q, n: _search_arxiv_papers(q, n, workspace_dir),
         "pubmed": lambda q, n: _search_pubmed_papers(q, n, pubmed_api_key),
         "semantic_scholar": lambda q, n: _search_semantic_scholar_papers(q, n, semantic_scholar_api_key),
-        "openalex": _search_openalex_papers,
+        "openalex": lambda q, n: _search_openalex_papers(q, n, workspace_dir, openalex_api_key),
         "crossref": _search_crossref_papers,
         "perplexity": lambda q, n: _search_perplexity_papers(q, n, perplexity_api_key),
     }

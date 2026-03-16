@@ -126,11 +126,12 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
                 pattern=pattern,
                 prompt=initial_message,
             )
-        result, context, last_agent = initiate_group_chat(
-            pattern=pattern,
-            messages=initial_message,
-            max_rounds=max_iterations * 2 + 1
-        )
+        else:
+            result, context, last_agent = initiate_group_chat(
+                pattern=pattern,
+                messages=initial_message,
+                max_rounds=max_iterations * 2 + 1
+            )
 
         save_agent_history(
             workspace_dir=workspace_dir,

@@ -18,7 +18,7 @@ def check_opencode_availability() -> bool:
 class OpenCodeClient:
     def __init__(
         self,
-        base_url: str = "http://localhost:4096",
+        base_url: str = "http://0.0.0.0:4096",
         timeout: float = 300.0,
         config_file: Optional[Path] = None,
         provider_id: Optional[str] = None,

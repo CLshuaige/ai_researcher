@@ -183,9 +183,6 @@ class APIProjectService:
         output["workspace_dir"] = str(workspace_dir)
 
         stage = str(delta.get("stage") or node_name)
-<<<<<<< HEAD
-        status = str(delta.get("status") or "unknown")
-=======
         if "status" in delta:
             status = str(delta.get("status"))
         elif delta.get("error"):
@@ -195,7 +192,6 @@ class APIProjectService:
         else:
             status = "unknown"
 
->>>>>>> 3546a428a5447630cc6a122fe902e6238956a227
         return NodeResult(
             node=node_name,
             stage=stage,

@@ -71,6 +71,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             "provider_id": provider_id,
             "model_id": model_id,
         }
+        print(f"opencode_runtime: {opencode_runtime}")
+        
 
     task_content = load_artifact_from_file(workspace_dir, "task")
     idea_content = load_artifact_from_file(workspace_dir, "idea")
@@ -212,20 +214,41 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 target=AgentTarget(engineer),
                 messages=(
                     f"Execution Results:\n{results}\n\n"
-                    "Perform a completion check before deciding this step is done.\n"
-                    "Do not mark completion for partial progress, demo-only output, smoke-test-only output, empty/placeholder results, "
-                    "or results that do not satisfy the step objective.\n\n"
-                    "Only output '==STEP_COMPLETE==' if ALL of the following are true:\n"
-                    "1) The required deliverable/result for this step is produced.\n"
-                    "2) The result is correct (not just runnable) and matches the intended objective.\n"
-                    "3) There is concrete evidence from execution/artifacts supporting correctness.\n"
-                    "4) No blocking errors remain.\n\n"
+
+                    "Evaluate whether this step objective has been fully satisfied based on the execution evidence.\n"
+                    "Do NOT assume success unless it is supported by concrete artifacts, files, or metrics.\n\n"
+
+                    "Do NOT mark completion for:\n"
+                    "- partial progress\n"
+                    "- demo-only output\n"
+                    "- smoke-test-only output\n"
+                    "- empty or placeholder artifacts\n"
+                    "- outputs that do not satisfy the step objective\n\n"
+
+                    "A step is COMPLETE only if ALL of the following are true:\n"
+                    "1) The required deliverable or artifact for this step has been produced.\n"
+                    "2) The artifact/output is correct and satisfies the intended objective (not just runnable).\n"
+                    "3) There is concrete evidence from execution outputs, logs, files, or metrics.\n"
+                    "4) No blocking runtime errors remain.\n\n"
+
+                    "If any condition above is not satisfied, the step must be marked INCOMPLETE.\n"
+                    "Diagnose the issue and propose the minimal next action required to fix it.\n\n"
+
                     "Your response must include:\n"
-                    "- Completion decision: COMPLETE or INCOMPLETE\n"
-                    "- Evidence: key outputs/files/metrics proving correctness\n"
-                    "- Gap analysis: what is still missing or incorrect (if any)\n"
-                    "- Next action: exact fix/verification to run next (if INCOMPLETE)\n\n"
-                    "Append '==STEP_COMPLETE==' ONLY when the decision is COMPLETE."
+                    "- Evidence: key artifacts, files, logs, or metrics proving correctness\n"
+                    "- Gap analysis: what is missing, incorrect, or failing (if any)\n"
+                    "- Next action: the minimal concrete fix or verification that should run next\n\n"
+                    "- Completion decision: your final decision after analysis, COMPLETE or INCOMPLETE\n"
+
+                    "Prefer targeted fixes such as:\n"
+                    "- correcting file paths\n"
+                    "- fixing dataset loading\n"
+                    "- adjusting configuration parameters\n"
+                    "- resolving integration bugs\n\n"
+
+                    "Avoid restarting the entire step unless absolutely necessary.\n\n"
+
+                    "Append '==STEP_COMPLETE==' ONLY when the completion decision is COMPLETE."
                 ),
                 context_variables=ctx,
             )
@@ -268,8 +291,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             return FunctionTargetResult(
                 target=AgentTarget(engineer),
                 messages=(
-                    "Step is still incomplete. Refine the instruction with a concrete fix plan and rerun.\n"
-                    "Do not claim completion until missing requirements are fully satisfied with verifiable evidence."
+                    "Step is incomplete. Analyze the gaps described above and issue specific corrective instructions to resolve them. The fix plan must target the exact failure points (e.g., missing files, invalid metrics, dependency errors, or incorrect data processing) and define the minimal actions required to repair the step and rerun it. Do not mark the step as complete until the required outputs exist and are verified by concrete artifacts, logs, or metrics."
                 ),
                 context_variables=ctx,
             )

@@ -10,7 +10,7 @@ class IdeaCandidate(BaseModel):
     strengths: List[str] = Field(default_factory=list, description="Idea strengths")
     weaknesses: List[str] = Field(default_factory=list, description="Idea weaknesses")
     round: int = Field(default=0, description="Round when proposed")
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Timestamp in ISO format")
 
 
 class ResearchIdea(BaseModel):
