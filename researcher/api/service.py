@@ -214,6 +214,9 @@ class APIProjectService:
         workspace_dir = self.base_dir / project_id
         config_path = Path(request.config_path) if request.config_path else None
         config = load_global_config(config_path=config_path)
+        llm_config_path = get_project_root() / "configs" / "llm_config.json"
+        llm_config = load_json(llm_config_path) if llm_config_path.exists() else None
+        config.setdefault("llm_config", llm_config)
         config.setdefault("researcher", {})
         config["researcher"]["workflow"] = "default" if request.mode == "auto" else "step"
 

@@ -1,42 +1,44 @@
 # Core framework
-langgraph>=0.2.0
-langchain>=0.3.0
-langchain-core>=0.3.0
-langchain-openai>=0.2.0
+langgraph==1.0.6
+langchain==1.2.3
+langchain-core==1.2.7
+langchain-openai==1.1.7
 
 # Multi-agent framework
-pyautogen>=0.2.0
+autogen==0.10.4
 
 # API clients
-openai>=1.0.0
-anthropic>=0.25.0
+openai==2.15.0
+anthropic==0.76.0
 
 # Web search and scraping
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-arxiv>=2.1.0
+requests==2.32.5
+beautifulsoup4==4.14.3
+arxiv==2.4.0
 
 # Document processing
-pypdf>=3.17.0
-python-docx>=1.1.0
-markdown>=3.5.0
+pypdf==6.6.0
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+markdown==3.10
 
 # Data analysis
-pandas>=2.1.0
-numpy>=1.26.0
-matplotlib>=3.8.0
-seaborn>=0.13.0
+pandas==2.3.3
+numpy==2.4.1
+matplotlib==3.10.8
+seaborn==0.13.2
 
 # Utilities
-python-dotenv>=1.0.0
-pydantic>=2.5.0
-pyyaml>=6.0.0
+python-dotenv==1.2.1
+pydantic==2.12.5
+pyyaml==6.0.3
 
 # Web interface
-gradio>=4.0.0
-fastapi>=0.111.0
-uvicorn>=0.30.0
+gradio==6.3.0
+fastapi==0.128.0
+uvicorn==0.40.0
 
 # OpenCode integration
 opencode-ai==0.1.0a36
-nest_asyncio>=1.6.0
+nest_asyncio==1.6.0

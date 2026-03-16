@@ -17,6 +17,14 @@ def router_node(state: ResearchState) -> str:
     if state["stage"] == "initialization":
         start_node = state.get("start_node")
         if start_node is None or start_node == "task_parsing":
+            workspace_dir = state.get("workspace_dir")
+            if workspace_dir is not None:
+                input_dir = workspace_dir / "input"
+                if input_dir.exists() and input_dir.is_dir():
+                    for entry in input_dir.iterdir():
+                        if entry.name.startswith("."):
+                            continue
+                        return "source_ingestion"
             return "task_parsing"
         if start_node in valid_nodes:
             return start_node

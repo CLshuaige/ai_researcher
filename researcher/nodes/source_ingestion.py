@@ -27,7 +27,6 @@ from researcher.prompts.templates import (
 from researcher.state import ResearchState
 from researcher.utils import (
     get_llm_config,
-    load_artifact_from_file,
     log_stage,
     save_agent_history,
     save_json,
@@ -40,10 +39,6 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "source_ingestion", "Starting source ingestion")
 
     try:
-        input_text = load_artifact_from_file(workspace_dir, "input")
-        if not input_text:
-            raise WorkflowError("Input file not found")
-
         config = state["config"]["researcher"]["source_ingestion"]
         max_items = config["max_items"]
         max_files_per_item = config["max_files_per_item"]
@@ -55,9 +50,30 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         max_rounds_download = config["max_rounds_download"]
         max_rounds_summary = config["max_rounds_summary"]
 
-        sources = _extract_sources_from_input(input_text)
+        input_dir = workspace_dir / "input"
+        if not input_dir.exists() or not input_dir.is_dir():
+            raise WorkflowError(f"Input directory not found: {input_dir}")
+
+        sources: List[str] = []
+
+        sources_url_path = input_dir / "sources_url.json"
+        if sources_url_path.exists() and sources_url_path.is_file():
+            payload = json.loads(sources_url_path.read_text(encoding="utf-8"))
+
+            url_items = payload.get("sources") or payload.get("urls") or []
+            if not isinstance(url_items, list):
+                raise WorkflowError("sources_url.json must contain a list under 'sources' or 'urls'")
+            for item in url_items:
+                if isinstance(item, str) and item.strip():
+                    sources.append(item.strip())
+
+        for entry in sorted(input_dir.iterdir()):
+            if entry.name.startswith(".") or entry.name == "sources_url.json":
+                continue
+            sources.append(str(entry.resolve()))
+
         if not sources:
-            raise WorkflowError("No sources found in input.md section: ## Sources")
+            raise WorkflowError(f"No sources found in input directory: {input_dir}")
 
         if max_items is not None and len(sources) > max_items:
             sources = sources[:max_items]
@@ -237,6 +253,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                     if not target.exists() or not target.is_file():
                         raise ValueError(f"File not found: {target}")
 
+                    suffix = target.suffix.lower()
                     if max_bytes_arg is not None and max_bytes_per_file is not None:
                         per_read_limit = min(max_bytes_arg, max_bytes_per_file)
                     else:
@@ -251,7 +268,16 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                     else:
                         effective_limit = per_read_limit
 
-                    preview = _read_text_preview(target, max_bytes=effective_limit)
+                    if suffix == ".pdf":
+                        preview = _read_pdf_text(target, max_bytes=effective_limit)
+                    elif suffix == ".docx":
+                        preview = _read_docx_text(target, max_bytes=effective_limit)
+                    elif suffix == ".pptx":
+                        preview = _read_pptx_text(target, max_bytes=effective_limit)
+                    elif suffix == ".xlsx":
+                        preview = _read_excel_text(target, max_bytes=effective_limit)
+                    else:
+                        preview = _read_text_preview(target, max_bytes=effective_limit)
                     if max_total_bytes_per_item is not None:
                         consumed = preview["size"] if effective_limit is None else min(preview["size"], effective_limit)
                         read_budget["used"] = used + consumed
@@ -417,6 +443,11 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
 
         summary_path = knowledge_dir / "knowledge_summary.md"
         save_markdown(summary_content, summary_path)
+        log_stage(
+            workspace_dir,
+            "source_ingestion",
+            f"Wrote knowledge summary: {summary_path}",
+        )
 
         save_agent_history(
             workspace_dir=workspace_dir,
@@ -431,10 +462,15 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
 
         update_state = {
             "stage": "source_ingestion",
+            "knowledge": {
+                "summary_path": str(summary_path),
+                "metadata_path": str(metadata_path),
+                "stats": metadata.get("stats", {}),
+            },
         }
         # router
         if state["config"]["researcher"]["workflow"] == "default":
-            update_state["next_node"] = "end"
+            update_state["next_node"] = "task_parsing"
         return update_state
 
     except Exception as e:
@@ -716,6 +752,92 @@ def _read_text_preview(file_path: Path, max_bytes: Optional[int]) -> Dict[str, A
 
     content = payload.decode("utf-8", errors="replace")
 
+    return {
+        "path": str(file_path),
+        "size": file_size,
+        "truncated": truncated,
+        "content": content,
+    }
+
+
+def _truncate_by_bytes(content: str, max_bytes: Optional[int]) -> tuple[str, bool]:
+    if max_bytes is None:
+        return content, False
+    raw = content.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return content, False
+    trimmed = raw[:max_bytes].decode("utf-8", errors="ignore")
+    return trimmed, True
+
+
+def _read_pdf_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:
+    from pypdf import PdfReader
+
+    file_size = file_path.stat().st_size
+    reader = PdfReader(str(file_path))
+    chunks: List[str] = []
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        if text:
+            chunks.append(text)
+    content = "\n\n".join(chunks).strip()
+    content, truncated = _truncate_by_bytes(content, max_bytes)
+    return {
+        "path": str(file_path),
+        "size": file_size,
+        "truncated": truncated,
+        "content": content,
+    }
+
+
+def _read_docx_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:
+    from docx import Document
+
+    file_size = file_path.stat().st_size
+    doc = Document(str(file_path))
+    paragraphs = [para.text for para in doc.paragraphs if para.text]
+    content = "\n".join(paragraphs).strip()
+    content, truncated = _truncate_by_bytes(content, max_bytes)
+    return {
+        "path": str(file_path),
+        "size": file_size,
+        "truncated": truncated,
+        "content": content,
+    }
+
+
+def _read_pptx_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:
+    from pptx import Presentation
+
+    file_size = file_path.stat().st_size
+    presentation = Presentation(str(file_path))
+    lines: List[str] = []
+    for slide in presentation.slides:
+        for shape in slide.shapes:
+            text = getattr(shape, "text", None)
+            if text:
+                lines.append(text)
+    content = "\n".join(lines).strip()
+    content, truncated = _truncate_by_bytes(content, max_bytes)
+    return {
+        "path": str(file_path),
+        "size": file_size,
+        "truncated": truncated,
+        "content": content,
+    }
+
+
+def _read_excel_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:
+    import pandas as pd
+
+    file_size = file_path.stat().st_size
+    data_frames = pd.read_excel(file_path, sheet_name=None)
+    chunks: List[str] = []
+    for sheet_name, df in data_frames.items():
+        chunks.append(f"# Sheet: {sheet_name}")
+        chunks.append(df.to_string(index=False))
+    content = "\n\n".join(chunks).strip()
+    content, truncated = _truncate_by_bytes(content, max_bytes)
     return {
         "path": str(file_path),
         "size": file_size,
