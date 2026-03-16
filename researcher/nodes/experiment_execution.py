@@ -41,6 +41,9 @@ from researcher.prompts.templates import (
     ENGINEER_STEP_GUIDANCE_SHORT_PROMPT,
     RA_STEP_PROMPT,
     CODE_DEBUG_PROMPT,
+    INSTRUCTION_ENGINEER_PROMPT,
+    VALIDATOR_PROMPT,
+    REPAIR_ENGINEER_PROMPT,
 )
 from researcher.exceptions import WorkflowError
 
@@ -50,6 +53,39 @@ from researcher.integrations.opencode import (
     opencode_codebase_experiment,
     resolve_opencode_model_selector,
 )
+
+
+# =============================================================================
+# Three-Role Agent Creation Functions
+# Based on ENGINEER_SYSTEM_PROMPT's three responsibilities
+# =============================================================================
+
+def create_instruction_engineer_agent(llm_config):
+    """Create Instruction Engineer agent for generating execution specifications."""
+    return ConversableAgent(
+        name="InstructionEngineer",
+        system_message=INSTRUCTION_ENGINEER_PROMPT,
+        llm_config=llm_config,
+    )
+
+
+def create_validator_agent(llm_config):
+    """Create Validator agent for determining step completion."""
+    return ConversableAgent(
+        name="Validator",
+        system_message=VALIDATOR_PROMPT,
+        llm_config=llm_config,
+    )
+
+
+def create_repair_engineer_agent(llm_config):
+    """Create Repair Engineer agent for generating targeted fixes."""
+    return ConversableAgent(
+        name="RepairEngineer",
+        system_message=REPAIR_ENGINEER_PROMPT,
+        llm_config=llm_config,
+    )
+
 
 def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
@@ -108,6 +144,11 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     engineer = EngineerAgent().create_agent(llm_config)
     analyst = AnalystAgent().create_agent(llm_config)
 
+    # Three-Role Engineer Agents (based on ENGINEER_SYSTEM_PROMPT responsibilities)
+    instruction_engineer = create_instruction_engineer_agent(llm_config)
+    validator = create_validator_agent(llm_config)
+    repair_engineer = create_repair_engineer_agent(llm_config)
+
     if human_in_the_loop:
         human = ConversableAgent(name="Human", human_input_mode="ALWAYS")
 
@@ -132,13 +173,20 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         "opencode_base_url": opencode_runtime.get("base_url"),
         "opencode_provider_id": opencode_runtime.get("provider_id"),
         "opencode_model_id": opencode_runtime.get("model_id"),
+        # Three-role workflow state
+        "workflow_phase": "instruction",  # instruction → validation → repair (loop)
+        "instruction_plan": None,         # Instruction Engineer output
+        "execution_result": None,         # Code execution output
+        "validation_result": None,        # Validator output
+        "repair_count": 0,                # Repair attempts counter
     })
 
     # ===============================
-    # STEP DISPATCH
+    # STEP DISPATCH (Start New Step)
     # ===============================
 
     def dispatch_next_step(ctx: ContextVariables) -> FunctionTargetResult:
+        """Start a new step: reset workflow state and call Instruction Engineer."""
         index = ctx["current_index"]
 
         if index >= len(ctx["execution_order"]):
@@ -152,10 +200,14 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         step = steps_dict[step_id]
 
         ctx["current_step_id"] = step_id
-        ctx["step_status"] = "plan"
-        ctx["retry_count"] = 0
         step_dir = get_step_dir(step, ctx["experiment_dir"])
         ctx["step_dir"] = step_dir
+
+        # Reset workflow state for new step
+        ctx["workflow_phase"] = "instruction"
+        ctx["step_status"] = "plan"
+        ctx["retry_count"] = 0
+        ctx["repair_count"] = 0
         ctx["step_file_snapshot"] = _get_file_snapshot(step_dir)
 
         prompt = parse_method_step_to_prompt(
@@ -164,13 +216,63 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             exp_dir=ctx["experiment_dir"],
         )
 
-        target_agent = ra if step.assignee == "RA" else engineer
-
         return FunctionTargetResult(
-            target=AgentTarget(target_agent),
+            target=AgentTarget(instruction_engineer),
             messages=prompt,
             context_variables=ctx,
         )
+
+    # ===============================
+    # THREE-ROLE WORKFLOW ROUTER
+    # ===============================
+
+    def route_three_role_workflow(ctx: ContextVariables) -> FunctionTargetResult:
+        """Route within three-role workflow: validation → repair → validation loop."""
+        step_id = ctx["current_step_id"]
+        step = steps_dict[step_id]
+        phase = ctx.get("workflow_phase", "validation")
+
+        if phase == "validation":
+            # Validator determines if step is complete
+            execution_result = ctx.get("execution_result", "")
+            expected_output = step.expected_output
+
+            validation_prompt = (
+                f"Step {step_id}: {step.description}\n\n"
+                f"Expected Output: {expected_output}\n\n"
+                f"Execution Result:\n{execution_result}\n\n"
+                "Evaluate whether the step objective has been fully satisfied. "
+                "Provide Evidence, Gap analysis, Next action, and Completion decision."
+            )
+
+            return FunctionTargetResult(
+                target=AgentTarget(validator),
+                messages=validation_prompt,
+                context_variables=ctx,
+            )
+
+        elif phase == "repair":
+            # Repair Engineer generates targeted fix instructions
+            validation_feedback = ctx.get("validation_result", "")
+            instruction_plan = ctx.get("instruction_plan", "")
+
+            repair_prompt = (
+                f"Original Plan:\n{instruction_plan}\n\n"
+                f"Validation Feedback:\n{validation_feedback}\n\n"
+                "Generate targeted repair instructions to fix the specific issues. "
+                "Be minimal and specific - do not rewrite the entire solution."
+            )
+
+            return FunctionTargetResult(
+                target=AgentTarget(repair_engineer),
+                messages=repair_prompt,
+                context_variables=ctx,
+            )
+
+        else:
+            # Unknown phase, default to validation
+            ctx["workflow_phase"] = "validation"
+            return route_three_role_workflow(ctx)
 
     # ===============================
     # BACKEND EXECUTION
@@ -196,105 +298,111 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         raise ValueError(f"Unsupported backend: {backend}")
 
     # ===============================
-    # ENGINEER HANDLER
+    # THREE-ROLE ENGINEER HANDLERS
+    # Based on ENGINEER_SYSTEM_PROMPT's three responsibilities
+    # ===============================
+
+    def handle_instruction_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:
+        """Handle Instruction Engineer output: save plan, execute code, then validate."""
+        step_id = ctx["current_step_id"]
+
+        # Save the instruction plan
+        ctx["instruction_plan"] = str(output)
+
+        # Execute the instruction via backend (opencode)
+        results = execute_backend(str(output), ctx)
+        ctx["execution_result"] = results
+
+        # Move to validation phase and route to validator
+        ctx["workflow_phase"] = "validation"
+
+        return route_three_role_workflow(ctx)
+
+    def handle_validator(output, ctx: ContextVariables) -> FunctionTargetResult:
+        """Handle Validator output: check COMPLETE/INCOMPLETE, route accordingly."""
+        step_id = ctx["current_step_id"]
+        step = steps_dict[step_id]
+        text = str(output)
+
+        # Save validation result
+        ctx["validation_result"] = text
+
+        # Check if COMPLETE
+        if "COMPLETE" in text and "INCOMPLETE" not in text.upper().split("COMPLETE")[0]:
+            # Step is complete
+            summary = _extract_step_summary(text)
+            files = _collect_step_files(ctx)
+            ctx["step_results"][step_id] = {
+                "status": "success",
+                "output": summary,
+                "files": files,
+            }
+            _save_step_record(ctx, step_id, step, status="success", summary=summary, output=text, files=files)
+
+            # Move to next step, reset workflow state
+            ctx["current_index"] += 1
+            ctx["workflow_phase"] = "instruction"
+            ctx["retry_count"] = 0
+            ctx["repair_count"] = 0
+            ctx["instruction_plan"] = None
+            ctx["execution_result"] = None
+            ctx["validation_result"] = None
+
+            return dispatch_next_step(ctx)
+
+        # Step is INCOMPLETE - need repair
+        ctx["repair_count"] += 1
+
+        # Check if max retries exceeded
+        if ctx["repair_count"] >= ctx["max_retries"]:
+            summary = _extract_step_summary(text)
+            files = _collect_step_files(ctx)
+            ctx["step_results"][step_id] = {
+                "status": "failed",
+                "output": summary,
+                "files": files,
+            }
+            _save_step_record(ctx, step_id, step, status="failed", summary=summary, output=text, files=files)
+
+            # Move to next step even though this one failed
+            ctx["current_index"] += 1
+            ctx["workflow_phase"] = "instruction"
+            ctx["retry_count"] = 0
+            ctx["repair_count"] = 0
+
+            return dispatch_next_step(ctx)
+
+        # Move to repair phase and route to repair engineer
+        ctx["workflow_phase"] = "repair"
+        print("======================================================incomplete=============================================================")
+        return route_three_role_workflow(ctx)
+
+    def handle_repair_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:
+        """Handle Repair Engineer output: merge with original plan, re-execute, then re-validate."""
+        repair_instructions = str(output)
+
+        # Merge repair instructions with original plan
+        original_plan = ctx.get("instruction_plan", "")
+        merged_plan = (
+            f"REPAIR INSTRUCTIONS:\n{repair_instructions}\n\n"
+            f"ORIGINAL PLAN:\n{original_plan}"
+        )
+
+        # Re-execute the merged plan
+        ctx["instruction_plan"] = merged_plan
+        results = execute_backend(merged_plan, ctx)
+        ctx["execution_result"] = results
+
+        # Move back to validation phase and route to validator
+        ctx["workflow_phase"] = "validation"
+
+        return route_three_role_workflow(ctx)
+
+    # ===============================
+    # LEGACY HANDLER (kept for RA tasks)
     # ===============================
 
     def handle_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:
-        step_id = ctx["current_step_id"]
-        status = ctx["step_status"]
-        step = steps_dict[step_id]
-
-        # ---- PLAN → EXECUTE ----
-        if status == "plan":
-            results = execute_backend(str(output), ctx)
-            ctx["last_execution_output"] = results
-            ctx["step_status"] = "check"
-
-            return FunctionTargetResult(
-                target=AgentTarget(engineer),
-                messages=(
-                    f"Execution Results:\n{results}\n\n"
-
-                    "Evaluate whether this step objective has been fully satisfied based on the execution evidence.\n"
-                    "Do NOT assume success unless it is supported by concrete artifacts, files, or metrics.\n\n"
-
-                    "Do NOT mark completion for:\n"
-                    "- partial progress\n"
-                    "- demo-only output\n"
-                    "- smoke-test-only output\n"
-                    "- empty or placeholder artifacts\n"
-                    "- outputs that do not satisfy the step objective\n\n"
-
-                    "A step is COMPLETE only if ALL of the following are true:\n"
-                    "1) The required deliverable or artifact for this step has been produced.\n"
-                    "2) The artifact/output is correct and satisfies the intended objective (not just runnable).\n"
-                    "3) There is concrete evidence from execution outputs, logs, files, or metrics.\n"
-                    "4) No blocking runtime errors remain.\n\n"
-
-                    "If any condition above is not satisfied, the step must be marked INCOMPLETE.\n"
-                    "Diagnose the issue and propose the minimal next action required to fix it.\n\n"
-
-                    "Your response must include:\n"
-                    "- Evidence: key artifacts, files, logs, or metrics proving correctness\n"
-                    "- Gap analysis: what is missing, incorrect, or failing (if any)\n"
-                    "- Next action: the minimal concrete fix or verification that should run next\n\n"
-                    "- Completion decision: your final decision after analysis, COMPLETE or INCOMPLETE\n"
-
-                    "Prefer targeted fixes such as:\n"
-                    "- correcting file paths\n"
-                    "- fixing dataset loading\n"
-                    "- adjusting configuration parameters\n"
-                    "- resolving integration bugs\n\n"
-
-                    "Avoid restarting the entire step unless absolutely necessary.\n\n"
-
-                    "Append '==STEP_COMPLETE==' ONLY when the completion decision is COMPLETE."
-                ),
-                context_variables=ctx,
-            )
-
-        # ---- CHECK COMPLETION ----
-        if status == "check":
-            text = str(output)
-
-            if "==STEP_COMPLETE==" in text:
-                summary = _extract_step_summary(text)
-                files = _collect_step_files(ctx)
-                ctx["step_results"][step_id] = {
-                    "status": "success",
-                    "output": summary,
-                    "files": files,
-                }
-                _save_step_record(ctx, step_id, step, status="success", summary=summary, output=text, files=files)
-                ctx["current_index"] += 1
-                ctx["step_status"] = "done"
-                return dispatch_next_step(ctx)
-
-            # retry
-            ctx["retry_count"] += 1
-
-            if ctx["retry_count"] >= ctx["max_retries"]:
-                summary = _extract_step_summary(text)
-                files = _collect_step_files(ctx)
-                ctx["step_results"][step_id] = {
-                    "status": "failed",
-                    "output": summary,
-                    "files": files,
-                }
-                _save_step_record(ctx, step_id, step, status="failed", summary=summary, output=text, files=files)
-                ctx["current_index"] += 1
-                return dispatch_next_step(ctx)
-
-            # re-plan
-            ctx["step_status"] = "plan"
-
-            return FunctionTargetResult(
-                target=AgentTarget(engineer),
-                messages=(
-                    "Step is incomplete. Analyze the gaps described above and issue specific corrective instructions to resolve them. The fix plan must target the exact failure points (e.g., missing files, invalid metrics, dependency errors, or incorrect data processing) and define the minimal actions required to repair the step and rerun it. Do not mark the step as complete until the required outputs exist and are verified by concrete artifacts, logs, or metrics."
-                ),
-                context_variables=ctx,
-            )
 
         raise RuntimeError("Invalid step_status")
 
@@ -319,7 +427,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         return dispatch_next_step(ctx)
 
     # ===============================
-    # AGENT ROUTER
+    # AGENT ROUTER (Three-Role Workflow)
     # ===============================
 
     def route_output(output, ctx: ContextVariables):
@@ -333,27 +441,53 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 context_variables=ctx,
             )
 
-        if step.assignee.lower() == "engineer":
-            target = handle_engineer(output, ctx)
+        # RA tasks use legacy handler
+        if step.assignee == "RA":
+            return handle_ra(output, ctx)
 
-        elif step.assignee == "RA":
-            target = handle_ra(output, ctx)
-        return target
+        # Engineer tasks use three-role workflow
+        phase = ctx.get("workflow_phase", "instruction")
 
-    # Register handoffs
-    ra.handoffs.set_after_work(FunctionTarget(lambda output, context_variables: 
+        if phase == "instruction":
+            return handle_instruction_engineer(output, ctx)
+        elif phase == "validation":
+            return handle_validator(output, ctx)
+        elif phase == "repair":
+            return handle_repair_engineer(output, ctx)
+        else:
+            # Fallback to validation if phase is unknown
+            return handle_validator(output, ctx)
+
+    # Register handoffs for all agents
+    ra.handoffs.set_after_work(FunctionTarget(lambda output, context_variables:
                                               route_output(output, context_variables)))
-    engineer.handoffs.set_after_work(FunctionTarget(lambda output, context_variables: 
+    engineer.handoffs.set_after_work(FunctionTarget(lambda output, context_variables:
                                               route_output(output, context_variables)))
+
+    # Three-role engineer agents use the same router
+    instruction_engineer.handoffs.set_after_work(FunctionTarget(lambda output, context_variables:
+                                                                route_output(output, context_variables)))
+    validator.handoffs.set_after_work(FunctionTarget(lambda output, context_variables:
+                                                     route_output(output, context_variables)))
+    repair_engineer.handoffs.set_after_work(FunctionTarget(lambda output, context_variables:
+                                                           route_output(output, context_variables)))
+
     analyst.handoffs.set_after_work(TerminateTarget())
 
     # ===============================
     # PATTERN
     # ===============================
 
+    # Determine initial agent based on first step assignee
+    first_step = steps_dict[execution_order[ctx["current_index"]]]
+    if first_step.assignee == "RA":
+        initial_agent = ra
+    else:
+        initial_agent = instruction_engineer  # Start with instruction phase for Engineer tasks
+
     pattern = DefaultPattern(
-        initial_agent=ra if steps_dict[execution_order[ctx["current_index"]]].assignee == "RA" else engineer,
-        agents=[ra, engineer, analyst],
+        initial_agent=initial_agent,
+        agents=[ra, engineer, analyst, instruction_engineer, validator, repair_engineer],
         context_variables=ctx,
         group_manager_args={"llm_config": llm_config},
     )
