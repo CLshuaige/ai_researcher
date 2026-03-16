@@ -123,32 +123,39 @@ def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional
     return load_markdown(artifact_path)
 
 
+_LLM_CONFIG: Optional[Dict[str, Any]] = None
+def set_llm_config_override(config: Optional[Dict[str, Any]]) -> None:
+    global _LLM_CONFIG
+    _LLM_CONFIG = config
+
+
 def get_llm_config(config_path: Optional[Path] = None, use_tool: bool = False, sampling_params: dict = None) -> Dict[str, Any]:
     """Get standard LLM configuration for autogen
     Load LLM configuration from json file"""
     import json
 
-    if config_path is None:
-        config_path = get_default_config_path("llm_config.json")
-    
-    if config_path.exists():
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config_data = json.load(f)
-            # print(f"Loaded LLM config from {config_path}")
-            # print(f"LLM Config: {config_data}")
-
-        if use_tool:
-            for config in config_data["config_list"]:
-                config["tool_choice"] = "required"
-
-        if sampling_params:
-            for config in config_data["config_list"]:
-                for k, v in sampling_params.items():
-                    config[k] = v
-
-        return config_data
+    if _LLM_CONFIG is not None:
+        config_data = json.loads(json.dumps(_LLM_CONFIG))
     else:
-        raise WorkflowError(f"LLM config file not found: {config_path}")
+        if config_path is None:
+            config_path = get_default_config_path("llm_config.json")
+
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+        else:
+            raise WorkflowError(f"LLM config file not found: {config_path}")
+
+    if use_tool:
+        for config in config_data["config_list"]:
+            config["tool_choice"] = "required"
+
+    if sampling_params:
+        for config in config_data["config_list"]:
+            for k, v in sampling_params.items():
+                config[k] = v
+
+    return config_data
 
 def load_global_config(config_path: Optional[Path] = None, config_filename: str = "debug.yaml") -> Dict[str, Any]:
     """Load global configuration from yaml file"""
@@ -160,8 +167,6 @@ def load_global_config(config_path: Optional[Path] = None, config_filename: str 
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config_data = yaml.safe_load(f)
-            # print(f"Loaded global config from {config_path}")
-            # print(f"Global Config: {config_data}")
             return config_data
     except Exception as e:
         raise WorkflowError(f"Failed to load global config from {config_path}: {str(e)}")

@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Dict, Any
 
 from researcher.state import ResearchState
-from researcher.utils import log_stage, merge_dict
+from researcher.utils import log_stage, merge_dict, set_llm_config_override
 
 
 def _normalize_run_mode(run_mode: str | None, workflow: str | None) -> tuple[str, str]:
@@ -31,6 +31,9 @@ def init_node(state: ResearchState) -> Dict[str, Any]:
     workflow = researcher_cfg.get("workflow")
     run_mode, workflow_mode = _normalize_run_mode(state.get("run_mode"), workflow)
     researcher_cfg["workflow"] = workflow_mode
+
+    llm_config = config.get("llm_config")
+    set_llm_config_override(llm_config if isinstance(llm_config, dict) else None)
 
     project_id = state.get("project_id") or state.get("session_id")
 
