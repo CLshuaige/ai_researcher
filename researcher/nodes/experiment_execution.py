@@ -327,8 +327,18 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         # Save validation result
         ctx["validation_result"] = text
 
-        # Check if COMPLETE
-        if "COMPLETE" in text and "INCOMPLETE" not in text.upper().split("COMPLETE")[0]:
+        # Check if COMPLETE - look for explicit completion markers
+        # Must contain "==STEP_COMPLETE==" OR "Completion decision: COMPLETE" without INCOMPLETE
+        is_complete = False
+        if "==STEP_COMPLETE==" in text:
+            is_complete = True
+        elif "Completion decision: COMPLETE" in text and "INCOMPLETE" not in text:
+            is_complete = True
+        elif "COMPLETE" in text and "INCOMPLETE" not in text:
+            # Fallback: has COMPLETE but no INCOMPLETE anywhere
+            is_complete = True
+
+        if is_complete:
             # Step is complete
             summary = _extract_step_summary(text)
             files = _collect_step_files(ctx)
@@ -374,7 +384,6 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
         # Move to repair phase and route to repair engineer
         ctx["workflow_phase"] = "repair"
-        print("======================================================incomplete=============================================================")
         return route_three_role_workflow(ctx)
 
     def handle_repair_engineer(output, ctx: ContextVariables) -> FunctionTargetResult:

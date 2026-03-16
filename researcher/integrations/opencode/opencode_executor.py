@@ -12,17 +12,72 @@ except ImportError as e:
 
 
 OPENCODE_NOTE = """## Instructions
+
+### Core Integrity Rules
 - It is prohibited to fabricate or occupy various data, processes or results.
+- Never invent experimental results, dataset values, file contents, logs, metrics, or execution outputs.
+- If required information or data is missing, explicitly state that the information is unavailable instead of guessing.
+
+### Experimental Discipline
 - It is more important to strictly follow the experimental constraints and carry out each step meticulously to obtain the results, rather than simply completing the process.
-- After writing or changing code, run it automatically. Use the run result to decide whether to fix or extend the program; repeat until the instruction is fully satisfied.
-- Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step.
+- The objective is to obtain **real experimental outputs**, not simulated outcomes.
+
+### Mandatory Execution Loop
+- After writing or changing code, run it automatically.
+- Use the real execution result to decide whether to fix or extend the program.
+- If execution fails, debug and rerun until the problem is resolved.
+- Repeat the following cycle until the instruction is fully satisfied:
+
+    Write → Run → Observe Output → Verify → Fix → Re-run
+
+- Never assume code works without executing it.
+
+### Real Output Requirement
+- All conclusions must be supported by **actual execution outputs, logs, or generated files**.
+- Do not simulate outputs, mock results, or provide hypothetical execution results.
+- If execution produces empty, incomplete, or invalid outputs, treat it as failure and fix the code.
+
+### Editing Workflow
+- Prefer **edit** for small changes.
+- Use **read** before editing to understand the existing code context.
+
+### Experiment Result Reporting
+- After finishing this step, summarize the **actual experiment result**.
+- The summary must be based only on real execution outputs.
+- The summary should be detailed enough that reading it alone is sufficient to understand the result of this step.
+
+### Execution Environment
 - Use the conda environment "{env_path}" to run the code.
-- Focus only on this experiment scope. Current step working directory: "{exp_dir}". Put all new files for this step in it.
+
+### Directory Scope
+- Focus only on this experiment scope.
+- Current step working directory: "{exp_dir}".
+- Put all new files for this step inside this directory.
+
+### Cross-Step Restrictions
 - Cross-step continuity is allowed only inside this same experiment root: "{exp_root}" (for example, sibling step directories under the same root).
 - Do not read, reference, or copy files from other timestamped project directories outside "{exp_root}", even if their tasks look similar.
-- Execute this experiment step to completion and produce the required step result; do not stop at a partial proof-of-concept.
+
+### Completion Requirements
+- Execute this experiment step to completion and produce the required step result.
+- Do not stop at a partial proof-of-concept.
+- A step is considered complete only if:
+
+    1. The code has been executed successfully.
+    2. The required outputs are generated.
+    3. The outputs are real execution results.
+    4. No placeholder implementations remain.
+
+### Forbidden Outputs
 - Avoid ending with demo scripts, toy examples, or smoke tests as final output for the step.
 - In general, do not write demo code unless the instruction explicitly asks for a demo.
+- The following are strictly forbidden unless explicitly requested:
+
+    - mock data
+    - placeholder implementations
+    - simulated results
+    - pseudo outputs
+    - incomplete demo pipelines
 """
 
 
