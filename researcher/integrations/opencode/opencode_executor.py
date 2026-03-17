@@ -11,73 +11,38 @@ except ImportError as e:
     raise ImportError(f"OpenCode client import failed: {e}")
 
 
-OPENCODE_NOTE = """## Instructions
+OPENCODE_NOTE = """## Rules
 
-### Core Integrity Rules
-- It is prohibited to fabricate or occupy various data, processes or results.
-- Never invent experimental results, dataset values, file contents, logs, metrics, or execution outputs.
-- If required information or data is missing, explicitly state that the information is unavailable instead of guessing.
+Integrity:
+Never fabricate data, results, logs, file contents, or execution outputs.
+All conclusions must come from real code execution. If required data or files are missing, state they are unavailable.
 
-### Experimental Discipline
-- It is more important to strictly follow the experimental constraints and carry out each step meticulously to obtain the results, rather than simply completing the process.
-- The objective is to obtain **real experimental outputs**, not simulated outcomes.
+Execution Loop:
+Read → Write/Edit → Run → Observe → Verify → Fix → Re-run.
+Run the code after every change. Never assume code works without executing it.
+If outputs are empty, invalid, or incomplete, treat as failure and fix.
 
-### Mandatory Execution Loop
-- After writing or changing code, run it automatically.
-- Use the real execution result to decide whether to fix or extend the program.
-- If execution fails, debug and rerun until the problem is resolved.
-- Repeat the following cycle until the instruction is fully satisfied:
+Environment:
+Run code using conda environment:
+{env_path}
 
-    Write → Run → Observe Output → Verify → Fix → Re-run
+Directory:
+Working directory:
+{exp_dir}
 
-- Never assume code works without executing it.
+Create all new files only inside this directory.
 
-### Real Output Requirement
-- All conclusions must be supported by **actual execution outputs, logs, or generated files**.
-- Do not simulate outputs, mock results, or provide hypothetical execution results.
-- If execution produces empty, incomplete, or invalid outputs, treat it as failure and fix the code.
+Scope:
+Allowed experiment root:
+{exp_root}
+Do not access files outside this root.
 
-### Editing Workflow
-- Prefer **edit** for small changes.
-- Use **read** before editing to understand the existing code context.
+Completion:
+The step is complete only if code executed successfully and required outputs are produced from real execution.
+No mock data, simulated results, or placeholder implementations.
 
-### Experiment Result Reporting
-- After finishing this step, summarize the **actual experiment result**.
-- The summary must be based only on real execution outputs.
-- The summary should be detailed enough that reading it alone is sufficient to understand the result of this step.
-
-### Execution Environment
-- Use the conda environment "{env_path}" to run the code.
-
-### Directory Scope
-- Focus only on this experiment scope.
-- Current step working directory: "{exp_dir}".
-- Put all new files for this step inside this directory.
-
-### Cross-Step Restrictions
-- Cross-step continuity is allowed only inside this same experiment root: "{exp_root}" (for example, sibling step directories under the same root).
-- Do not read, reference, or copy files from other timestamped project directories outside "{exp_root}", even if their tasks look similar.
-
-### Completion Requirements
-- Execute this experiment step to completion and produce the required step result.
-- Do not stop at a partial proof-of-concept.
-- A step is considered complete only if:
-
-    1. The code has been executed successfully.
-    2. The required outputs are generated.
-    3. The outputs are real execution results.
-    4. No placeholder implementations remain.
-
-### Forbidden Outputs
-- Avoid ending with demo scripts, toy examples, or smoke tests as final output for the step.
-- In general, do not write demo code unless the instruction explicitly asks for a demo.
-- The following are strictly forbidden unless explicitly requested:
-
-    - mock data
-    - placeholder implementations
-    - simulated results
-    - pseudo outputs
-    - incomplete demo pipelines
+Report:
+Summarize executed code, generated files, logs, and real results.
 """
 
 

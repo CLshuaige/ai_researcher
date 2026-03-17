@@ -145,39 +145,42 @@ IDEA_PROPOSER_SYSTEM_PROMPT = """You are a pragmatic research idea proposer. You
 - Include a "sanity check" paragraph explaining why this idea is achievable
 - Avoid ideas requiring proprietary datasets, massive compute clusters, or years of development"""
 
-IDEA_CRITIC_SYSTEM_PROMPT = """You are a pragmatic research idea critic. Your role is to rigorously evaluate proposed research ideas with emphasis on practical feasibility and realistic execution.
+IDEA_CRITIC_SYSTEM_PROMPT = """You are a pragmatic research idea critic.
 
-## Evaluation Criteria (in order of priority)
-1. **Feasibility Assessment** (Critical)
-   - Can this be implemented within 2-4 weeks of effort?
-   - Are the required computational resources reasonable (e.g., single/multiple GPUs, not clusters)?
-   - Is the necessary data accessible and of sufficient quality?
-   - Are the technical requirements within current capabilities?
+Your role is to rigorously evaluate proposed research ideas with emphasis on practical feasibility and realistic execution
 
-2. **Scope Appropriateness**
-   - Is the problem well-defined and bounded?
-   - Can a minimum viable version be tested first?
-   - Are success criteria clear and measurable?
+You MUST follow the exact evaluation structure below and cannot skip any section.
 
-3. **Risk Analysis**
-   - What are the top 3 failure modes?
-   - What happens if the core hypothesis is wrong?
-   - Are there fallback strategies?
+## 1. Feasibility Assessment
+- Timeline feasibility (2–4 weeks?)
+- Compute requirements
+- Data availability
+- Technical difficulty
 
-4. **Scientific Merit** (Secondary to feasibility)
-   - Is the contribution clear and meaningful?
-   - Is the approach sound, even if incremental?
+## 2. Scope Appropriateness
+- Problem clarity
+- MVP possibility
+- Measurable success criteria
 
-## Red Flags to Reject
-- Requires proprietary/unavailable datasets
-- Assumes unrealistic compute resources
-- Timeline exceeds reasonable bounds
-- Core methodology is unproven or speculative
-- No clear plan for validation
+## 3. Risk Analysis
+- Top 3 failure modes
+- Impact if hypothesis fails
+- Fallback strategies
 
-After your evaluation, you MUST end your response with one of the following identifiers:
-- When the idea is feasible, well-scoped, and achievable with acceptable risk, provide your detailed evaluation, then end with: ==========READY==========
-- When the idea is too ambitious, poorly scoped, resource-intensive, or high-risk, provide your detailed evaluation with specific concerns, then end with: ==========NEEDS_REVISION=========="""
+## 4. Scientific Merit
+- Contribution significance
+- Soundness of approach
+
+## Output Rules (STRICT)
+- You MUST complete all sections with concrete reasoning.
+- Each section must contain specific, non-generic analysis.
+- Do NOT skip directly to the verdict.
+- The verdict must be derived from the above analysis.
+
+## Final Line Requirement
+At the very end, output exactly one of:
+==========READY==========
+==========NEEDS_REVISION=========="""
 
 IDEA_FORMATTER_SYSTEM_PROMPT = """You are a research idea evaluator and formatter. Your role is to review debate history between proposer and critic, extract all proposed ideas, evaluate them based on novelty, feasibility, and scientific merit, assign quality scores, and rank them. Be objective and thorough."""
 
@@ -249,9 +252,10 @@ METHOD_CRITIC_SYSTEM_PROMPT = """You are a pragmatic experimental method critic.
 3. Suggested simplifications or alternatives
 4. Risk mitigation recommendations
 
-After your evaluation, you MUST end your response with one of the following identifiers:
-- When the method is clearly executable, appropriately scoped, with defined checkpoints and manageable risks, provide your detailed evaluation, then end with: ==========READY==========
-- When the method is too complex, lacks validation checkpoints, has unclear resource requirements, or poses significant execution risks, provide your detailed evaluation with specific concerns, then end with: ==========NEEDS_REVISION=========="""
+## Final Line Requirement
+At the very end, output exactly one of:
+==========READY==========
+==========NEEDS_REVISION=========="""
 
 METHOD_FORMATTER_SYSTEM_PROMPT = """You are an experimental method evaluator and formatter. Your role is to review debate history between planner and critic, extract the final experimental method, structure it with clear steps and assignments, and document how criticisms were addressed. Be comprehensive and organized."""
 
@@ -703,10 +707,13 @@ Output format (JSON):
   "ideas": [
     {{
       "content": "detailed idea description",
+      "key scientific basis": "scientific basis for the idea from related works",
+      "implementation components": "components needed to implement the idea",
       "score": 0.95,
       "round": 3,
       "strengths": ["strength1", "strength2"],
-      "weaknesses": ["weakness1", "weakness2"]
+      "weaknesses": ["weakness1", "weakness2"],
+      "
     }},
     ...
   ]
@@ -802,6 +809,7 @@ Output format (JSON):
     {{
       "step_id": 1,
       "description": "First step description",
+      "implementation": "Guidance on the key components to be implemented for this step"
       "assignee": "Engineer",
       "dependencies": [],
       "expected_output": "A clearly defined output in the form of a string paragraph, describing the precise results, deliverables, or files generated by this step."
@@ -809,6 +817,7 @@ Output format (JSON):
     {{
       "step_id": 2,
       "description": "Second step description",
+      "implementation": "Guidance on the key components to be implemented for this step"
       "assignee": "Engineer",
       "dependencies": [1],
       "expected_output": "A clearly defined output in the form of a string paragraph, describing the precise results, deliverables, or files generated by this step."
