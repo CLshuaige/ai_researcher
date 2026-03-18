@@ -49,7 +49,7 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
 
         planner = MethodPlannerAgent().create_agent(llm_config)
         critic = MethodCriticAgent().create_agent(llm_config)
-        formatter = MethodFormatterAgent().create_agent(llm_config)
+        formatter = MethodFormatterAgent().create_agent(llm_config, enable_context_compression=False)
 
         initial_context = ContextVariables(data={
                 "debate_count": 0,
@@ -189,7 +189,8 @@ def _parse_method(formatted_output: Dict[str, Any], debate_rounds: int) -> Exper
             description=step_data.get("description", ""),
             assignee=step_data.get("assignee", ""),
             dependencies=step_data.get("dependencies", []),
-            expected_output=step_data.get("expected_output", "")
+            expected_output=step_data.get("expected_output", ""),
+            #implement_guidance=step_data.get("implement_guidance", ""),
         )
         steps.append(step)
 

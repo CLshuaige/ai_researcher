@@ -9,6 +9,10 @@ class IdeaCandidate(BaseModel):
     score: float = Field(default=0.0, ge=0.0, le=1.0, description="Idea quality score")
     strengths: List[str] = Field(default_factory=list, description="Idea strengths")
     weaknesses: List[str] = Field(default_factory=list, description="Idea weaknesses")
+
+    basis: str = Field(description="Key scientific basis")
+    components: List[str] = Field(default_factory=list, description="Implementation components")
+
     round: int = Field(default=0, description="Round when proposed")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Timestamp in ISO format")
 
@@ -54,6 +58,15 @@ class ResearchIdea(BaseModel):
             lines.append(f"Round: {candidate.round}\n\n")
             lines.append(f"{candidate.content}\n\n")
 
+            if i == self.selected_index:
+                if candidate.basis:
+                    lines.append(f"### Basis\n{candidate.basis}\n")
+                if candidate.components:
+                    lines.append("### Components\n")
+                    for j, component in enumerate(candidate.components):
+                        lines.append(f"{j+1}. {component}\n")
+                    lines.append("\n")
+
             if candidate.strengths:
                 lines.append("### Strengths\n")
                 for j, strength in enumerate(candidate.strengths, 1):
@@ -76,6 +89,7 @@ class MethodStep(BaseModel):
     assignee: str = Field(description="RA or Engineer")
     dependencies: List[int] = Field(default_factory=list, description="Dependent step IDs")
     expected_output: str = Field(default="", description="Expected output description")
+    #implement_guidance: str = Field(default="", description="Implementation guidance")
 
 
 class TaskAssignment(BaseModel):
@@ -107,6 +121,8 @@ class ExperimentalMethod(BaseModel):
                 lines.append(f"- **Assignee**: {step.assignee}\n")
                 if step.dependencies:
                     lines.append(f"- **Dependencies**: {', '.join(map(str, step.dependencies))}\n")
+                # if step.implement_guidance:
+                #     lines.append(f"- **Implement Guidance**: {step.implement_guidance}\n")
                 if step.expected_output:
                     lines.append(f"- **Expected Output**: {step.expected_output}\n")
                 lines.append("\n")

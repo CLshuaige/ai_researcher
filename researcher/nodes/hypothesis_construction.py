@@ -159,6 +159,7 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
 
         debate_rounds = len([msg for msg in result.chat_history if msg.get("name") in [proposer.name, critic.name]]) // 2
         idea = _parse_idea(formatted_output, debate_rounds)
+        idea.rank_candidates()
 
         idea_path = get_artifact_path(workspace_dir, "idea")
         save_markdown(idea.to_markdown(), idea_path)
@@ -187,7 +188,9 @@ def _parse_idea(formatted_output: Dict[str, Any], debate_rounds: int) -> Researc
             score=idea_data.get("score", 0.0),
             round=idea_data.get("round", 0),
             strengths=idea_data.get("strengths", []),
-            weaknesses=idea_data.get("weaknesses", [])
+            weaknesses=idea_data.get("weaknesses", []),
+            basis=idea_data.get("key scientific basis", ""),
+            components=idea_data.get("implementation components", [])
         )
         candidates.append(candidate)
 
