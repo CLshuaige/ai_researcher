@@ -1,34 +1,43 @@
-from typing import Dict, Any, List, Annotated
+from datetime import datetime
+from pathlib import Path
+from typing import Annotated, Any, Dict, List
+import json
+import re
+import shutil
 
-from autogen import ConversableAgent, ContextExpression
+from autogen import ContextExpression, ConversableAgent
 from autogen.agentchat import initiate_group_chat
-from autogen.agentchat.group.patterns import DefaultPattern
 from autogen.agentchat.group import (
     AgentTarget,
-    FunctionTarget,
-    FunctionTargetResult,
-    TerminateTarget,
     ContextVariables,
-    ReplyResult,
+    ExpressionContextCondition,
     OnContextCondition,
-    ExpressionContextCondition
+    ReplyResult,
+    TerminateTarget,
 )
+from autogen.agentchat.group.patterns import DefaultPattern
 
-from researcher.state import ResearchState
-from researcher.schemas import LiteratureReview, LiteratureItem
-from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent
-from researcher.utils import (
-    save_markdown,
-    log_stage,
-    get_artifact_path,
-    load_artifact_from_file,
-    get_llm_config,
-    save_agent_history,
-    iterable_group_chat,
-)
-from researcher.prompts.templates import LITERATURE_SEARCH_PROMPT, LITERATURE_SUMMARY_PROMPT
+from researcher.agents import LiteratureBloggerAgent, LiteratureSearcherAgent, LiteratureSummarizerAgent
 from researcher.exceptions import WorkflowError
 from researcher.integrations.literature_search import search_literature
+from researcher.prompts.templates import (
+    LITERATURE_BLOG_PROMPT,
+    LITERATURE_SEARCH_PROMPT,
+    LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT,
+)
+from researcher.schemas import LiteratureItem, LiteratureReview
+from researcher.state import ResearchState
+from researcher.utils import (
+    get_artifact_path,
+    get_llm_config,
+    iterable_group_chat,
+    load_artifact_from_file,
+    load_markdown,
+    log_stage,
+    save_agent_history,
+    save_json,
+    save_markdown,
+)
 
 
 def literature_review_node(state: ResearchState) -> Dict[str, Any]:
@@ -73,83 +82,17 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
-        # 1. 定义 hook 函数
-        def inject_context_to_prompt(messages: list[dict]) -> list[dict]:
-            """
-            把 context variables 里的 task 和 papers 信息，注入到 Summarizer 的 prompt 里。
-            """
-            # messages - 当前 agent 的对话历史（含 user + system 等）
-            # 先查最后一条 user 说的话
-            last_user = None
-            if messages:
-                for msg in reversed(messages):
-                    if msg.get("role") == "user":
-                        last_user = msg
-                        break
-
-            # 读取 context variables
-            # 当前 registered hook 是挂在 Summarizer agent 上，
-            # 所以我们可以通过 messages 找 owner agent 的 context
-            # 假设 Summarizer agent 有 context_variables 属性
-            # 你也可以通过闭包传进来
-            ctx: ContextVariables = summarizer.context_variables
-
-            task_text = ctx.get("task", "")
-            searching_results = ctx.get("searching_results", [])
-
-            # 拼接所有检索到的论文摘要
-            papers_text_list = []
-            for r in searching_results:
-                formatted = r.get("formatted_text", "")
-                if formatted:
-                    papers_text_list.append(formatted)
-
-            combined_papers = "\n\n---\n\n".join(papers_text_list) if papers_text_list else ""
-
-            # 构造额外提示
-            extra_prompt = (
-                f"Task:\n{task_text}\n\n"
-                f"Papers:\n{combined_papers}\n\n"
-                "Use the above task and paper info to generate a summarized synthesis in natural language, not json. "
-                "Write in academic style, focusing on key themes, methodologies, research gaps, and relevant findings."
-            )
-
-            # 我们把这个 prompt 放在 messages 最后 user 之前
-            # 这样 LLM 在看到 Summarizer 输入时会包含我们动态构造的内容
-            new_msgs = []
-            for msg in messages:
-                new_msgs.append(msg)
-
-            # 插入作为额外 user prompt
-            new_msgs.append({
-                "role": "user",
-                "content": extra_prompt
-            })
-
-            return new_msgs
-
         searcher = LiteratureSearcherAgent().create_agent(llm_config)
         summarizer = LiteratureSummarizerAgent().create_agent(llm_config)
 
-        # def always_trigger(sender):
-        #     return True
-        #summarizer.register_reply(always_trigger, context_for_summarization_reply_func, position=0)
-        
         llm_config_tool = get_llm_config(use_tool=True)
         executor = ConversableAgent(
             name="SearchExecutor",
             human_input_mode="NEVER",
-            system_message="Initiate the tool call based on the received search keywords and other information",
+            system_message="Call the search tool according to received literature-search instructions.",
             llm_config=llm_config_tool,
-            functions=[search_literature_papers]
+            functions=[search_literature_papers],
         )
-
-        # register_function(
-        #     search_arxiv_papers,
-        #     caller=executor,
-        #     executor=executor,
-        #     description="Search arxiv for academic papers, download and cache PDFs, return paper metadata",
-        # )
 
         initial_variables = ContextVariables(data={
             "state": "start",
@@ -157,89 +100,219 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             "searching_results": []
         })
 
-        pattern = DefaultPattern(
+        search_pattern = DefaultPattern(
             initial_agent=searcher,
-            agents=[searcher, executor, summarizer],
+            agents=[searcher, executor],
             group_manager_args={"llm_config": llm_config},
-            context_variables=initial_variables
+            context_variables=initial_variables,
         )
-
 
         searcher.handoffs.set_after_work(AgentTarget(executor))
         executor.handoffs.add_context_condition(
             OnContextCondition(
-                #target=FunctionTarget(format_papers_for_summarizer),
-                target=AgentTarget(summarizer),
-                condition=ExpressionContextCondition(ContextExpression("${state} == 'searched'"))
+                target=TerminateTarget(),
+                condition=ExpressionContextCondition(ContextExpression("${state} == 'searched'")),
             )
         )
-        summarizer.register_hook(
-            "process_all_messages_before_reply",
-            inject_context_to_prompt
-        )
-        summarizer.handoffs.set_after_work(TerminateTarget())
 
         prompt = LITERATURE_SEARCH_PROMPT.format(task=task)
-
         if state["config"]["researcher"]["iterable"]:
-            result, context, last_agent = iterable_group_chat(
+            search_result, context, _ = iterable_group_chat(
                 state,
                 max_rounds=10,
                 enable_hitl=False,
-                pattern=pattern,
+                pattern=search_pattern,
                 prompt=prompt,
             )
         else:
-            result, context, last_agent = initiate_group_chat(
-                pattern=pattern,
+            search_result, context, _ = initiate_group_chat(
+                pattern=search_pattern,
                 messages=prompt,
-                max_rounds=10
+                max_rounds=10,
             )
 
-        # Extract papers and synthesis from messages
-        literature_items = []
-        synthesis = None
-        
-        # Get papers from context_variables["searching_results"]
         searching_results = context.get("searching_results", [])
-        for result_data in searching_results:
-            if result_data.get("success") and "papers" in result_data:
-                for paper in result_data["papers"]:
-                    literature_items.append(LiteratureItem(
-                        title=paper.get("title", ""),
-                        authors=paper.get("authors", []),
-                        abstract=paper.get("abstract", ""),
-                        url=paper.get("url", ""),
-                        year=paper.get("year")
-                    ))
+        if not searching_results:
+            raise WorkflowError("No literature search results found")
 
-        # Extract synthesis from messages (from summarizer)
-        for msg in result.chat_history:
-            content = msg.get("content", "")
-            if msg.get("name") == summarizer.name and len(content) > 100:
-                synthesis = content
-                break
+        unified_metadata: List[Dict[str, Any]] = []
+        sequence = 0
+        for source_result in searching_results:
+            source = str(source_result.get("source", "unknown"))
+            query = str(source_result.get("query", ""))
+            for paper in source_result.get("papers", []) or []:
+                sequence += 1
+                paper_uid = _build_paper_uid(source, sequence, paper)
+                entry = {
+                    "paper_uid": paper_uid,
+                    "source": source,
+                    "query": query,
+                    "title": paper.get("title", ""),
+                    "authors": paper.get("authors", []) or [],
+                    "abstract": paper.get("abstract", "") or "",
+                    "url": paper.get("url", "") or "",
+                    "year": paper.get("year"),
+                    "arxiv_id": paper.get("arxiv_id"),
+                    "external_id": paper.get("external_id"),
+                    "doi": paper.get("doi"),
+                    "pdf_cached": paper.get("pdf_cached"),
+                    "pdf_path": paper.get("pdf_path"),
+                }
+                entry.update(_prepare_paper_bundle(entry, workspace_dir))
+                unified_metadata.append(entry)
 
-        if not synthesis:
+        metadata_path = workspace_dir / "literature" / "metadata.json"
+        save_json(
+            {
+                "generated_at": datetime.now().isoformat(),
+                "task": task,
+                "papers": unified_metadata,
+            },
+            metadata_path,
+        )
+
+        blogger_histories: List[Dict[str, Any]] = []
+        image_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".gif"}
+
+        for entry in unified_metadata:
+            blogger = LiteratureBloggerAgent().create_agent(llm_config)
+            parsed_md_path = Path(str(entry["parsed_md_path"]))
+            paper_markdown = load_markdown(parsed_md_path) or ""
+
+            images_dir = Path(str(entry["images_dir"]))
+            image_paths: List[str] = []
+            if images_dir.exists():
+                image_paths = [
+                    str(path)
+                    for path in sorted(images_dir.iterdir())
+                    if path.suffix.lower() in image_suffixes
+                ]
+            images_text = "\n".join(f"- {img}" for img in image_paths) if image_paths else "- (No images available)"
+
+            paper_metadata = json.dumps(
+                {
+                    "paper_uid": entry.get("paper_uid"),
+                    "title": entry.get("title"),
+                    "authors": entry.get("authors", []),
+                    "year": entry.get("year"),
+                    "source": entry.get("source"),
+                    "query": entry.get("query"),
+                    "url": entry.get("url"),
+                    "parse_status": entry.get("parse_status"),
+                    "parsed_md_path": entry.get("parsed_md_path"),
+                    "images_dir": entry.get("images_dir"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+            blog_prompt = LITERATURE_BLOG_PROMPT.format(
+                task=task,
+                paper_metadata=paper_metadata,
+                paper_markdown=paper_markdown,
+                available_images=images_text,
+            )
+            blogger.handoffs.set_after_work(TerminateTarget())
+            blogger_pattern = DefaultPattern(
+                initial_agent=blogger,
+                agents=[blogger],
+                group_manager_args={"llm_config": llm_config},
+            )
+            blogger_result, _, _ = initiate_group_chat(
+                pattern=blogger_pattern,
+                messages=blog_prompt,
+                max_rounds=4,
+            )
+            blog_history = blogger_result.chat_history
+            blogger_histories.extend(blog_history)
+            blog_content = ""
+            for msg in reversed(blog_history):
+                if msg.get("name") == blogger.name and isinstance(msg.get("content"), str):
+                    blog_content = msg.get("content", "")
+                    if blog_content.strip():
+                        break
+            if not blog_content.strip():
+                raise WorkflowError(f"Blogger did not generate content: {entry.get('title', '')}")
+
+            blog_path = Path(str(entry["blog_path"]))
+            blog_header = (
+                "# Paper Metadata\n\n"
+                f"- Title: {entry.get('title', '')}\n"
+                f"- Authors: {', '.join(entry.get('authors', []))}\n"
+                f"- Year: {entry.get('year')}\n"
+                f"- Source: {entry.get('source', '')}\n"
+                f"- URL: {entry.get('url', '')}\n"
+                f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
+                "---\n\n"
+            )
+            save_markdown(blog_header + blog_content, blog_path)
+
+        blog_blocks: List[str] = []
+        for idx, entry in enumerate(unified_metadata, start=1):
+            blog_path = Path(str(entry["blog_path"]))
+            blog_text = load_markdown(blog_path) or ""
+            if not blog_text.strip():
+                raise WorkflowError(f"Missing blog content for paper {idx}")
+
+            citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
+            blog_blocks.append(
+                f"## Paper {idx}\n"
+                f"- Citation Hint: {citation_hint}\n"
+                "\n"
+                f"{blog_text}"
+            )
+        blogs_text = "\n\n---\n\n".join(blog_blocks)
+
+        summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
+            task=task,
+            blogs_text=blogs_text,
+        )
+        summarizer.handoffs.set_after_work(TerminateTarget())
+        summarizer_pattern = DefaultPattern(
+            initial_agent=summarizer,
+            agents=[summarizer],
+            group_manager_args={"llm_config": llm_config},
+        )
+        summary_result, _, _ = initiate_group_chat(
+            pattern=summarizer_pattern,
+            messages=summary_prompt,
+            max_rounds=5,
+        )
+        summary_history = summary_result.chat_history
+        synthesis = ""
+        for msg in reversed(summary_history):
+            if msg.get("name") == summarizer.name and isinstance(msg.get("content"), str):
+                synthesis = msg.get("content", "")
+                if synthesis.strip():
+                    break
+        if not synthesis.strip():
             raise WorkflowError("Summarizer did not generate synthesis")
 
+        literature_items = [
+            LiteratureItem(
+                title=entry.get("title", ""),
+                authors=entry.get("authors", []),
+                abstract=entry.get("abstract", ""),
+                url=entry.get("url", ""),
+                year=entry.get("year"),
+            )
+            for entry in unified_metadata
+        ]
+        literature = LiteratureReview(items=literature_items, synthesis=synthesis)
+
+        lit_path = get_artifact_path(workspace_dir, "literature")
+        save_markdown(literature.to_markdown(), lit_path)
+
+        merged_history = list(search_result.chat_history) + blogger_histories + summary_history
         save_agent_history(
             workspace_dir=workspace_dir,
             node_name="literature_review",
-            messages=result.chat_history,
+            messages=merged_history,
             agent_chat_messages={
                 searcher.name: searcher.chat_messages,
                 summarizer.name: summarizer.chat_messages
             }
         )
-
-        literature = LiteratureReview(items=literature_items, synthesis=synthesis)
-
-        lit_dir = workspace_dir / "literature"
-        lit_dir.mkdir(exist_ok=True)
-
-        lit_path = get_artifact_path(workspace_dir, "literature")
-        save_markdown(literature.to_markdown(), lit_path)
 
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 
@@ -256,3 +329,125 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     except Exception as e:
         log_stage(workspace_dir, "literature_review", f"Error: {str(e)}")
         raise WorkflowError(f"Literature review failed: {str(e)}")
+
+
+def _build_paper_uid(source: str, sequence: int, paper: Dict[str, Any]) -> str:
+    raw = paper.get("arxiv_id") or paper.get("external_id") or paper.get("doi") or paper.get("url") or "paper"
+    source_token = re.sub(r"[^a-zA-Z0-9._-]+", "_", source).strip("._")[:20] or "source"
+    core = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(raw)).strip("._")[:96] or "paper"
+    return f"{source_token}_{sequence:05d}_{core}"
+
+
+def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[str, Any]:
+    source = str(entry.get("source", "unknown"))
+    pdf_path: Path | None = None
+
+    if entry.get("pdf_path"):
+        candidate = Path(str(entry["pdf_path"]))
+        if candidate.exists():
+            pdf_path = candidate
+
+    if pdf_path is None and entry.get("pdf_cached"):
+        candidate = workspace_dir / "literature" / f"{source}_cache" / str(entry["pdf_cached"])
+        if candidate.exists():
+            pdf_path = candidate
+
+    if pdf_path is None:
+        bundle_dir = workspace_dir / "literature" / "papers" / str(entry["paper_uid"])
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        images_dir = bundle_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        parsed_md_path = bundle_dir / "paper.md"
+        save_markdown(
+            "# Parsed Paper\n\n"
+            "_Full-text PDF is unavailable. This is metadata-based content._\n\n"
+            f"- Title: {entry.get('title', '')}\n"
+            f"- Authors: {', '.join(entry.get('authors', []))}\n"
+            f"- Year: {entry.get('year')}\n"
+            f"- URL: {entry.get('url', '')}\n\n"
+            "## Abstract\n\n"
+            f"{entry.get('abstract', '')}\n",
+            parsed_md_path,
+        )
+        return {
+            "parse_status": "metadata_only",
+            "parser_used": "none",
+            "paper_bundle_dir": str(bundle_dir),
+            "bundle_pdf_path": "",
+            "parsed_md_path": str(parsed_md_path),
+            "images_dir": str(images_dir),
+            "blog_path": str(bundle_dir / "blog.md"),
+        }
+
+    bundle_dir = pdf_path.parent / pdf_path.stem
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    bundle_pdf_path = bundle_dir / "paper.pdf"
+    if not bundle_pdf_path.exists():
+        shutil.copy2(pdf_path, bundle_pdf_path)
+
+    images_dir = bundle_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    parsed_md_path = bundle_dir / "paper.md"
+
+    import fitz  # type: ignore
+
+    try:
+        doc = fitz.open(str(bundle_pdf_path))
+        sections: List[str] = []
+        image_count = 0
+
+        for page_idx, page in enumerate(doc, start=1):
+            text = (page.get_text("text") or "").strip()
+            chunk_lines = [f"## Page {page_idx}", "", text if text else "_No text extracted on this page._"]
+
+            for image_idx, image_info in enumerate(page.get_images(full=True), start=1):
+                xref = image_info[0]
+                image_data = doc.extract_image(xref)
+                image_bytes = image_data.get("image")
+                if not image_bytes:
+                    continue
+                ext = image_data.get("ext", "png")
+                image_name = f"page_{page_idx:03d}_img_{image_idx:02d}.{ext}"
+                image_path = images_dir / image_name
+                with open(image_path, "wb") as image_file:
+                    image_file.write(image_bytes)
+                image_count += 1
+                chunk_lines.append(f"![Figure p{page_idx}-{image_idx}]({image_path})")
+
+            sections.append("\n".join(chunk_lines).strip())
+
+        markdown_text = "\n\n".join(sections).strip()
+        save_markdown(
+            "# Parsed Paper\n\n"
+            f"- Source PDF: {bundle_pdf_path}\n"
+            "- Parser Used: fitz\n"
+            f"- Extracted Images: {image_count}\n\n"
+            f"{markdown_text}\n",
+            parsed_md_path,
+        )
+        parse_status = "fulltext"
+        parser_used = "fitz"
+    except Exception:
+        save_markdown(
+            "# Parsed Paper\n\n"
+            "_PDF parsing failed. Falling back to metadata-only content._\n\n"
+            f"- Title: {entry.get('title', '')}\n"
+            f"- Authors: {', '.join(entry.get('authors', []))}\n"
+            f"- Year: {entry.get('year')}\n"
+            f"- URL: {entry.get('url', '')}\n\n"
+            "## Abstract\n\n"
+            f"{entry.get('abstract', '')}\n",
+            parsed_md_path,
+        )
+        parse_status = "metadata_only"
+        parser_used = "fitz_failed"
+
+    return {
+        "parse_status": parse_status,
+        "parser_used": parser_used,
+        "paper_bundle_dir": str(bundle_dir),
+        "bundle_pdf_path": str(bundle_pdf_path),
+        "parsed_md_path": str(parsed_md_path),
+        "images_dir": str(images_dir),
+        "blog_path": str(bundle_dir / "blog.md"),
+    }

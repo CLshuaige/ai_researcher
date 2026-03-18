@@ -124,6 +124,15 @@ LITERATURE_SEARCHER_SYSTEM_PROMPT = """You are a literature search specialist. Y
 
 LITERATURE_SUMMARIZER_SYSTEM_PROMPT = """You are a literature summarization expert. Your role is to extract key information from academic papers and synthesize comprehensive reviews. Focus on themes, methodologies, research gaps, and relevant findings."""
 
+LITERATURE_BLOGGER_SYSTEM_PROMPT = """Your role is to read one paper and produce a high-quality markdown blog for that.
+
+Requirements:
+1. Keep an academic but readable style.
+2. Emphasize motivation, method, evidence, limitations, and practical implications.
+3. Only include the most important figures for later literature review reuse.
+4. Use the provided local image **absolute paths** when inserting figures.
+5. If full text is unavailable, clearly state that the blog is metadata-based."""
+
 # Hypothesis Construction Module
 IDEA_PROPOSER_SYSTEM_PROMPT = """You are a creative research idea proposer. Your role is to generate innovative, scientifically valuable research hypotheses based on literature review and task requirements.
 
@@ -688,7 +697,48 @@ Provide:
 Write in academic style, 300-500 words.
 """
 
-IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a research idea that addresses genuine scientific gaps:
+LITERATURE_BLOG_PROMPT = """Write a blog for ONE paper.
+
+Task:
+{task}
+
+Paper Metadata (JSON):
+{paper_metadata}
+
+Parsed Paper Markdown:
+{paper_markdown}
+
+Available Images:
+{available_images}
+
+Output requirements:
+1. Output Markdown only.
+2. Include sections: Overview, Method, Evidence, Limitations, Relevance to Task.
+3. Include 0-2 most important figures only with markdown image syntax using the provided image paths.
+4. For each inserted figure, explain why it is critical for downstream literature review writing.
+5. If the paper is metadata-only, explicitly mention that full-text evidence is limited.
+"""
+
+LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
+
+Task:
+{task}
+
+All Paper Blogs:
+{blogs_text}
+
+Requirements:
+1. Using Markdown.
+2. Academic style and complete literature-review structure.
+3. Use author-year citations in the main text.
+4. Build synthesis from blog evidence, not only abstract-level summaries.
+5. Insert only the most relevant images.
+6. Include at least one Mermaid diagram that summarizes key research logic.
+7. Include at least one comparative table across papers.
+8. End with a References section using metadata entries.
+"""
+
+IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, achievable research idea:
 
 Task: {task}
 Literature Review: {literature}
