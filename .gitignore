@@ -59,7 +59,4 @@ Thumbs.db
 # Cache
 .cache/
 
-# Configs
-configs/
-
 opencode-sdk-python-next/

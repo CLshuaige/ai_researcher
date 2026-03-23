@@ -1,0 +1,78 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "server": {
+    "port": 4096,
+    "hostname": "172.23.21.212"
+  },
+  "model": "qwen-local//home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "provider": {
+    "openai-free": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenAI-free",
+      "options": {
+        "baseURL": "https://sub.jlypx.de/v1",
+        "apiKey": "sk-8f6eb617e0b68f2761dd52715945ff6e0acbfac110d051e4c719c690a7762a27",
+        "wire_api": "responses"
+      },
+      "models": {
+        "gpt-5.2-codex": {
+          "name": "gpt-5.2-codex",
+          "variants": {
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        }
+      }
+    },
+    "qwen-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Qwen Local",
+      "options": {
+        "baseURL": "http://localhost:8008/v1",
+        "apiKey": "EMPTY"
+      },
+      "models": {
+        "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct": {
+          "name": "Qwen3-Coder-30B-A3B-Instruct"
+        }
+      }
+    },
+    "kimi-code": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "kimi-code",
+      "options": {
+        "baseURL": "https://api.kimi.com/coding/v1",
+        "apiKey": "sk-kimi-B35uS7klu50K9y1S5wfMnIk69dUfa7zs9WOt4TsoRFHjNQiZ0WZwM6WkQQ0aHT4b",
+        "wire_api": "chat_completions"
+      },
+      "models": {
+        "kimi-code": {
+          "name": "kimi-for-coding"
+        }
+      }
+    }
+  },
+  "tools": {
+    "bash": true,
+    "edit": true,
+    "write": true,
+    "read": true,
+    "grep": true,
+    "glob": true,
+    "list": true,
+    "patch": true,
+    "todowrite": true,
+    "todoread": true,
+    "webfetch": true,
+    "question": true
+  },
+  "permission": {
+    "read": "allow",
+    "list": "allow",
+    "grep": "allow",
+    "glob": "allow"
+  },
+  "instructions": ["You are a scientific computing and research automation specialist. Focus on writing clean, efficient, reproducible code for experiments. Always validate results and handle errors gracefully."]
+}
+  
