@@ -6,7 +6,6 @@ from researcher.prompts.templates import (
     TASK_FORMATTER_SYSTEM_PROMPT,
     LITERATURE_SEARCHER_SYSTEM_PROMPT,
     LITERATURE_SUMMARIZER_SYSTEM_PROMPT,
-    LITERATURE_BLOGGER_SYSTEM_PROMPT,
     IDEA_PROPOSER_SYSTEM_PROMPT,
     IDEA_CRITIC_SYSTEM_PROMPT,
     IDEA_FORMATTER_SYSTEM_PROMPT,
@@ -38,6 +37,7 @@ class BaseAgent:
         self,
         llm_config: Dict[str, Any],
         enable_context_compression: Optional[bool] = None,
+        functions: Optional[List[Callable]] = None,
     ) -> ConversableAgent:
         """Create a ConversableAgent with automatic context compression.
 
@@ -57,6 +57,7 @@ class BaseAgent:
             name=self.name,
             system_message=self.system_prompt,
             llm_config=llm_config,
+            functions=functions,
         )
 
         global_config = None
@@ -107,11 +108,6 @@ class LiteratureSearcherAgent(BaseAgent):
 class LiteratureSummarizerAgent(BaseAgent):
     def __init__(self, name: str = "LiteratureSummarizer"):
         super().__init__(name, LITERATURE_SUMMARIZER_SYSTEM_PROMPT)
-
-
-class LiteratureBloggerAgent(BaseAgent):
-    def __init__(self, name: str = "LiteratureBlogger"):
-        super().__init__(name, LITERATURE_BLOGGER_SYSTEM_PROMPT)
 
 
 # Hypothesis Construction Module

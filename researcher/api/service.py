@@ -91,12 +91,30 @@ class APIProjectService:
     def _resolve_workspace(self, project_id: str) -> Path:
         index = self._load_index()
         raw_path = index.get(project_id)
-        if not raw_path:
+        if raw_path:
+            workspace_dir = Path(raw_path)
+            if workspace_dir.exists():
+                return workspace_dir
+
+        if not self.base_dir.exists():
             raise FileNotFoundError(f"Unknown project_id: {project_id}")
-        workspace_dir = Path(raw_path)
-        if not workspace_dir.exists():
-            raise FileNotFoundError(f"Workspace not found for project_id: {project_id}")
-        return workspace_dir
+
+        for workspace_dir in sorted(self.base_dir.iterdir()):
+            if not workspace_dir.is_dir():
+                continue
+            session = load_session_metadata(workspace_dir) or {}
+            discovered_id = str(
+                session.get("project_id")
+                or session.get("session_id")
+                or workspace_dir.name
+            )
+            if discovered_id != project_id:
+                continue
+            index[project_id] = str(workspace_dir)
+            self._save_index(index)
+            return workspace_dir
+
+        raise FileNotFoundError(f"Unknown project_id: {project_id}")
 
     def _load_project_session(self, workspace_dir: Path) -> Dict[str, Any]:
         session = load_session_metadata(workspace_dir) or {}
@@ -280,15 +298,30 @@ class APIProjectService:
 
     def list_projects(self) -> ProjectListResponse:
         index = self._load_index()
+        new_index = dict(index)
+        if self.base_dir.exists():
+            for workspace_dir in sorted(self.base_dir.iterdir()):
+                if not workspace_dir.is_dir():
+                    continue
+                session = load_session_metadata(workspace_dir) or {}
+                discovered_id = str(
+                    session.get("project_id")
+                    or session.get("session_id")
+                    or workspace_dir.name
+                )
+                new_index[discovered_id] = str(workspace_dir)
+        if new_index != index:
+            self._save_index(new_index)
+
         projects: List[ProjectStatusResponse] = []
-        for project_id, raw_path in index.items():
+        for project_id, raw_path in new_index.items():
             workspace_dir = Path(raw_path)
             if not workspace_dir.exists():
                 continue
             session = load_session_metadata(workspace_dir) or {}
             projects.append(
                 ProjectStatusResponse(
-                    project_id=project_id,
+                    project_id=str(session.get("project_id") or project_id),
                     project_name=session.get("project_name", "unknown"),
                     status=session.get("status", "unknown"),
                     stage=session.get("stage", "unknown"),

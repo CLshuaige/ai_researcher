@@ -120,18 +120,20 @@ SOURCE_SUMMARIZER_SYSTEM_PROMPT = """
 """
 
 # Literature Review Module
-LITERATURE_SEARCHER_SYSTEM_PROMPT = """You are a literature search specialist. Your role is to generate effective search queries and keywords for academic databases. Consider multiple search strategies, synonyms, and relevant venues (conferences, journals)."""
+LITERATURE_SEARCHER_SYSTEM_PROMPT = """You are a literature search specialist. Your role is to generate effective search queries and keywords for academic databases, then use those queries to search the literature before handing off. Consider multiple search strategies, synonyms, and relevant venues (conferences, journals).
 
-LITERATURE_SUMMARIZER_SYSTEM_PROMPT = """You are a literature summarization expert. Your role is to extract key information from academic papers and synthesize comprehensive reviews. Focus on themes, methodologies, research gaps, and relevant findings."""
+Behavior rules:
+- Plan concise keywords and 2-3 useful academic search queries.
+- After planning, call `search_literature_papers` with each proposed query whenever possible.
+- Use a different query string in each tool call and avoid repeating the same query.
+- Do not treat the planning JSON as a substitute for tool calls.
+- Prefer finishing the planned search calls before handing off to the next agent.
+"""
 
-LITERATURE_BLOGGER_SYSTEM_PROMPT = """Your role is to read one paper and produce a high-quality markdown blog for that.
+LITERATURE_SUMMARIZER_SYSTEM_PROMPT = """You are a literature summarization expert. Your role is to extract key information from academic papers and synthesize comprehensive reviews. Focus on themes, methodologies, research gaps, and relevant findings.
 
-Requirements:
-1. Keep an academic but readable style.
-2. Emphasize motivation, method, evidence, limitations, and practical implications.
-3. Only include the most important figures for later literature review reuse.
-4. Use the provided local image **absolute paths** when inserting figures.
-5. If full text is unavailable, clearly state that the blog is metadata-based."""
+When the input contains paper blogs with retained figures, produce a rich markdown literature review rather than plain prose only. Preserve the most important figure markdown when it materially helps the review, and include Mermaid diagrams in fenced ```mermaid blocks when asked to summarize literature or method relationships.
+"""
 
 # Hypothesis Construction Module
 IDEA_PROPOSER_SYSTEM_PROMPT = """You are a creative research idea proposer. Your role is to generate innovative, scientifically valuable research hypotheses based on literature review and task requirements.
@@ -675,6 +677,16 @@ Provide:
 2. 2-3 search queries for academic databases
 3. Suggested venues (conferences, journals)
 
+Execution requirements:
+1. First plan the keywords, queries, and venues.
+2. After planning, call `search_literature_papers` separately for each query you proposed whenever possible.
+3. Use different query strings across calls and avoid repeated calls with the same query.
+4. Use `max_results={num_papers}` unless there is a clear reason not to.
+5. Prefer broader coverage of the proposed queries before handoff.
+6. Do not stop after only outputting the JSON plan if tool calls are still pending.
+7. Do not use one "best" query as a replacement for the others. Try to cover all proposed queries.
+8. The final JSON is your search plan summary, not a replacement for the search tool calls.
+
 Format as JSON:
 {{
   "keywords": ["keyword1", "keyword2", ...],
@@ -714,9 +726,14 @@ Available Images:
 Output requirements:
 1. Output Markdown only.
 2. Include sections: Overview, Method, Evidence, Limitations, Relevance to Task.
-3. Include 0-2 most important figures only with markdown image syntax using the provided image paths.
-4. For each inserted figure, explain why it is critical for downstream literature review writing.
-5. If the paper is metadata-only, explicitly mention that full-text evidence is limited.
+3. Select images only from the figures already embedded in the parsed paper markdown above.
+4. Keep only the images that play a decisive role in understanding the paper core method, evidence, or conclusions. The number of retained images should be determined by their importance.
+5. If the parsed paper markdown contains a figure that is clearly important, retain at least one such figure in the blog.
+6. When you keep an image, preserve the original markdown image path from the parsed paper markdown and add a short explanation of why this image is critical for understanding the paper.
+7. If the paper is metadata-only, explicitly mention that full-text evidence is limited.
+8. Do not wrap the markdown in code fences such as ```markdown or ```.
+9. Strictly follow the paper content. Do not invent claims, methods, experimental settings, results, datasets, or figure meanings that are not supported by the provided paper content.
+10. If some detail is unclear or missing from the paper, say that it is unclear or not provided instead of guessing.
 """
 
 LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
@@ -732,10 +749,19 @@ Requirements:
 2. Academic style and complete literature-review structure.
 3. Use author-year citations in the main text.
 4. Build synthesis from blog evidence, not only abstract-level summaries.
-5. Insert only the most relevant images.
-6. Include at least one Mermaid diagram that summarizes key research logic.
-7. Include at least one comparative table across papers.
-8. End with a References section using metadata entries.
+5. Cover as many of the mentioned papers as possible. The literature review should preserve the important information from the full set of papers rather than discussing only a small subset.
+6. Organize the review by logical relationships such as problem setting, methodological family, evidence pattern, limitation, or research gap. Use clear sectioning and paragraph structure so the reasoning is easy to follow.
+7. Prefer a thorough and information-rich review when supported by the source papers. More useful detail is better, as long as it remains evidence-based and well organized.
+8. From the images already retained in the blogs, keep only the images that are most important for the full literature review. Do not include every image.
+9. If the blogs contain any meaningful retained images, the literature review should preserve at least one of them unless none of them are useful for a cross-paper synthesis.
+10. When you preserve an image, insert the exact markdown image syntax directly into the review and explain why that figure matters at the literature-review level.
+11. Include at least one Mermaid diagram that summarizes either literature relationships, methodological relationships, or both.
+12. The Mermaid output must be a valid fenced code block that starts with ```mermaid and can be rendered directly.
+13. Include at least one comparative table across papers.
+14. The output should be a rich literature review with integrated text, figures, Mermaid diagrams, and tables rather than prose alone.
+15. End with a References section using metadata entries.
+16. Strictly follow the evidence in the provided blogs. Do not invent methods, data, quantitative results, comparisons, causal claims, or research gaps that are not supported by the source papers.
+17. When evidence is limited, mixed, or missing, explicitly say so instead of filling gaps with plausible-sounding content.
 """
 
 IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, achievable research idea:

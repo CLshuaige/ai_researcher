@@ -284,7 +284,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         if backend == "opencode":
             results, session_id = opencode_codebase_experiment(
                 instruction,
-                workspace_dir=ctx["experiment_dir"] / f"step_{ctx["current_step_id"]}",
+                workspace_dir=ctx["experiment_dir"] / f"step_{ctx['current_step_id']}",
                 env_path=ctx["env_path"],
                 session_id=ctx["session_id"],
                 opencode_base_url=ctx["opencode_base_url"],
