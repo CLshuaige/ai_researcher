@@ -35,6 +35,10 @@ class ResearchState(TypedDict):
     paper: Optional[str]
     referee: Optional[ReviewReport]
 
+    # Literature review outputs
+    keywords: Optional[str]
+    metadata: Optional[list]
+
     # Workspace management
     workspace_dir: Path
     project_name: str

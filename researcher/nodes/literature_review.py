@@ -346,6 +346,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 
         update_state = {
+            "keywords": None,
+            "metadata": literature_items,
             "literature": literature,
             "stage": "literature_review",
         }
