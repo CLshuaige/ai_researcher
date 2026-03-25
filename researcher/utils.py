@@ -4,6 +4,7 @@ from typing import Optional, Any, Dict
 from datetime import datetime
 import json
 import re
+import tempfile
 
 import sys
 import uuid
@@ -558,3 +559,163 @@ def _wait_for_user_input(request_id: str):
     user_input = input_store.wait_for_input(request_id)
 
     return user_input
+
+
+# markdown -> html ->PDF
+def build_markdown_pdf_html(markdown_text: str, base_dir: Path, title: str) -> str:
+    import markdown as md
+
+    body = md.markdown(
+        markdown_text,
+        extensions=["extra", "fenced_code", "tables", "sane_lists"],
+    )
+    mermaid_uri = (get_project_root() / "researcher" / "static" / "mermaid.min.js").resolve().as_uri()
+    base_uri = base_dir.resolve().as_uri()
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <base href="{base_uri}/">
+  <style>
+    body {{
+      font-family: "Noto Serif CJK SC", "Noto Serif", "Times New Roman", serif;
+      color: #111827;
+      line-height: 1.75;
+      margin: 0 auto;
+      max-width: 860px;
+      padding: 32px 40px 56px;
+      font-size: 14px;
+      background: #ffffff;
+    }}
+    h1, h2, h3, h4 {{
+      color: #0f172a;
+      line-height: 1.3;
+      margin-top: 1.5em;
+      margin-bottom: 0.6em;
+    }}
+    p, ul, ol, table, pre, blockquote {{
+      margin-top: 0.8em;
+      margin-bottom: 0.8em;
+    }}
+    img {{
+      display: block;
+      max-width: min(88%, 720px);
+      max-height: 460px;
+      width: auto;
+      height: auto;
+      margin: 16px auto;
+      object-fit: contain;
+      page-break-inside: avoid;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    th, td {{
+      border: 1px solid #cbd5e1;
+      padding: 8px 10px;
+      vertical-align: top;
+    }}
+    th {{
+      background: #f8fafc;
+    }}
+    pre {{
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow-x: auto;
+      padding: 12px 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+    code {{
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      font-size: 0.92em;
+    }}
+    blockquote {{
+      border-left: 4px solid #94a3b8;
+      margin-left: 0;
+      padding-left: 16px;
+      color: #334155;
+    }}
+    .mermaid {{
+      margin: 20px 0;
+      text-align: center;
+      page-break-inside: avoid;
+    }}
+    .mermaid svg {{
+      max-width: 100%;
+      height: auto;
+    }}
+  </style>
+  <script src="{mermaid_uri}"></script>
+  <script>
+    window.__MERMAID_READY = false;
+    window.__MERMAID_ERROR = null;
+    window.addEventListener("load", async () => {{
+      try {{
+        document.querySelectorAll("pre > code.language-mermaid").forEach((code) => {{
+          const container = document.createElement("div");
+          container.className = "mermaid";
+          container.textContent = code.textContent;
+          code.parentElement.replaceWith(container);
+        }});
+        if (document.querySelector(".mermaid") && typeof mermaid !== "undefined") {{
+          mermaid.initialize({{ startOnLoad: false, securityLevel: "loose", theme: "default" }});
+          await mermaid.run({{ querySelector: ".mermaid" }});
+        }}
+      }} catch (error) {{
+        window.__MERMAID_ERROR = String(error);
+      }} finally {{
+        window.__MERMAID_READY = true;
+      }}
+    }});
+  </script>
+</head>
+<body>
+{body}
+</body>
+</html>
+"""
+
+
+def markdown_to_pdf(markdown_path: Path, pdf_path: Optional[Path] = None, title: Optional[str] = None) -> Path:
+    from playwright.sync_api import sync_playwright
+
+    markdown_path = Path(markdown_path)
+    pdf_path = Path(pdf_path) if pdf_path else markdown_path.with_suffix(".pdf")
+    markdown_text = load_markdown(markdown_path)
+
+    html = build_markdown_pdf_html(
+        markdown_text=markdown_text,
+        base_dir=markdown_path.parent,
+        title=title or markdown_path.stem,
+    )
+
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = Path(tmpdir) / "render.html"
+        html_path.write_text(html, encoding="utf-8")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(html_path.resolve().as_uri(), wait_until="load")
+            page.wait_for_function("window.__MERMAID_READY === true", timeout=10000)
+            page.pdf(
+                path=str(pdf_path),
+                format="A4",
+                print_background=True,
+                margin={
+                    "top": "18mm",
+                    "right": "16mm",
+                    "bottom": "18mm",
+                    "left": "16mm",
+                },
+            )
+            browser.close()
+
+    return pdf_path

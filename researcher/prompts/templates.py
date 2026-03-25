@@ -734,6 +734,9 @@ Output requirements:
 8. Do not wrap the markdown in code fences such as ```markdown or ```.
 9. Strictly follow the paper content. Do not invent claims, methods, experimental settings, results, datasets, or figure meanings that are not supported by the provided paper content.
 10. If some detail is unclear or missing from the paper, say that it is unclear or not provided instead of guessing.
+11. Use standard Markdown syntax throughout.
+12. For inline math, use `$...$`. For block math, use `$$...$$`.
+13. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
 """
 
 LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
@@ -762,6 +765,9 @@ Requirements:
 15. End with a References section using metadata entries.
 16. Strictly follow the evidence in the provided blogs. Do not invent methods, data, quantitative results, comparisons, causal claims, or research gaps that are not supported by the source papers.
 17. When evidence is limited, mixed, or missing, explicitly say so instead of filling gaps with plausible-sounding content.
+18. Use standard Markdown syntax throughout.
+19. For inline math, use `$...$`. For block math, use `$$...$$`.
+20. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
 """
 
 IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, achievable research idea:

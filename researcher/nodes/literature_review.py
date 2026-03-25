@@ -31,6 +31,8 @@ from researcher.utils import (
     get_llm_config,
     save_agent_history,
     iterable_group_chat,
+    parse_json_from_response,
+    markdown_to_pdf,
 )
 from researcher.prompts.templates import (
     LITERATURE_SEARCH_PROMPT,
@@ -227,6 +229,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         "---\n\n"
                     )
                     save_markdown(blog_header + blog_content, blog_path)
+                    markdown_to_pdf(blog_path)
 
                     citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
                     blog_blocks.append(
@@ -342,11 +345,11 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         lit_path = get_artifact_path(workspace_dir, "literature")
         save_markdown(literature.to_markdown(), lit_path)
+        markdown_to_pdf(lit_path)
 
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 
         update_state = {
-            "keywords": None,
             "metadata": literature_items,
             "literature": literature,
             "stage": "literature_review",

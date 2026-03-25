@@ -1,4 +1,5 @@
-# Core framework
+# python==3.13
+
 langgraph==1.0.6
 langchain==1.2.3
 langchain-core==1.2.7
@@ -23,6 +24,7 @@ python-pptx==1.0.2
 openpyxl==3.1.5
 markdown==3.10
 pymupdf==1.27.2.2
+playwright==1.55.0
 
 # Data analysis
 pandas==2.3.3

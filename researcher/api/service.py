@@ -122,6 +122,13 @@ class APIProjectService:
             raise FileNotFoundError(f"session.json not found in {workspace_dir}")
         return session
 
+    def _patch_project_session(self, workspace_dir: Path, patch: Dict[str, Any]) -> Dict[str, Any]:
+        # Always patch against the latest on-disk session to avoid stale-object overwrite.
+        session = load_session_metadata(workspace_dir) or {}
+        session.update(patch)
+        save_session_metadata(workspace_dir, session)
+        return session
+
     def _serialize(self, obj: Any) -> Any:
         if isinstance(obj, BaseModel):
             return obj.model_dump()
@@ -273,9 +280,13 @@ class APIProjectService:
         session = self._load_project_session(workspace_dir)
         current_config = session.get("config") or {}
         merged_config = merge_dict(current_config, request.config_patch)
-        session["config"] = merged_config
-        session["updated_at"] = datetime.now().isoformat()
-        save_session_metadata(workspace_dir, session)
+        self._patch_project_session(
+            workspace_dir,
+            {
+                "config": merged_config,
+                "updated_at": datetime.now().isoformat(),
+            },
+        )
 
         return ConfigUpdateResponse(
             project_id=project_id,
@@ -362,7 +373,18 @@ class APIProjectService:
             session["run_mode"] = run_mode
             session["updated_at"] = datetime.now().isoformat()
             session["last_run_id"] = run_id
-            save_session_metadata(workspace_dir, session)
+            session["input_text"] = input_text
+            self._patch_project_session(
+                workspace_dir,
+                {
+                    "status": session["status"],
+                    "stage": session["stage"],
+                    "run_mode": session["run_mode"],
+                    "updated_at": session["updated_at"],
+                    "last_run_id": session["last_run_id"],
+                    "input_text": session["input_text"],
+                },
+            )
 
             event_bus.publish(project_id, {
                 "event": "run_started",
@@ -406,10 +428,14 @@ class APIProjectService:
                     event_callback=_on_event,
                 )
             except Exception:
-                session["status"] = "failed"
-                session["stage"] = "error"
-                session["updated_at"] = datetime.now().isoformat()
-                save_session_metadata(workspace_dir, session)
+                self._patch_project_session(
+                    workspace_dir,
+                    {
+                        "status": "failed",
+                        "stage": "error",
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                )
                 event_bus.publish(project_id, {
                     "event": "run_failed",
                     "project_id": project_id,
@@ -419,10 +445,15 @@ class APIProjectService:
                 raise
 
             status = "completed" if not final_state.get("error") else "failed"
-            session["status"] = status
-            session["stage"] = final_state.get("stage", "unknown")
-            session["updated_at"] = datetime.now().isoformat()
-            save_session_metadata(workspace_dir, session)
+            self._patch_project_session(
+                workspace_dir,
+                {
+                    "status": status,
+                    "stage": final_state.get("stage", "unknown"),
+                    "updated_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now().isoformat(),
+                },
+            )
 
             response = RunResponse(
                 project_id=project_id,
@@ -509,9 +540,10 @@ class APIProjectService:
             updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
             # Update project session heartbeat timestamp for UI freshness.
-            session = self._load_project_session(workspace_dir)
-            session["updated_at"] = datetime.now().isoformat()
-            save_session_metadata(workspace_dir, session)
+            self._patch_project_session(
+                workspace_dir,
+                {"updated_at": datetime.now().isoformat()},
+            )
 
             return ArtifactUpdateResponse(
                 project_id=project_id,
@@ -607,9 +639,10 @@ class APIProjectService:
             stat = target_path.stat()
             updated_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
-            session = self._load_project_session(workspace_dir)
-            session["updated_at"] = datetime.now().isoformat()
-            save_session_metadata(workspace_dir, session)
+            self._patch_project_session(
+                workspace_dir,
+                {"updated_at": datetime.now().isoformat()},
+            )
 
             return FileWriteResponse(
                 project_id=project_id,
