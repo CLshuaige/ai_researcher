@@ -20,7 +20,7 @@ from autogen.agentchat.group import (
 
 from researcher.state import ResearchState
 from researcher.schemas import LiteratureReview, LiteratureItem
-from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent
+from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent, LiteratureManagerAgent
 from researcher.utils import (
     save_markdown,
     save_json,
@@ -35,6 +35,8 @@ from researcher.utils import (
     markdown_to_pdf,
 )
 from researcher.prompts.templates import (
+    LITERATURE_MANAGER_INITIAL_PROMPT,
+    LITERATRUE_SEARCH_PROMPT_WITH_MANAGER,
     LITERATURE_SEARCH_PROMPT,
     LITERATURE_SUMMARY_PROMPT,
     LITERATURE_BLOG_PROMPT,
@@ -56,6 +58,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         config = state["config"]["researcher"]["literature_review"]
         mode = config["mode"]
+        use_manager = config.get("use_manager", False)
         num_papers = config["num_papers"]
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
@@ -78,15 +81,24 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
                 context_variables["state"] = "searched"
                 context_variables["searching_results"].extend(results)
+                import json
+                results_dict = results[0]
+                if results_dict["success"]:
+                    formatted_text = results_dict.get("formatted_text", "")
+                    formatted_results = f"Search results for '{query}':\n{formatted_text}\n\n Searching completed."
+                else:
+                    formatted_results = f"No papers found. Please try again."
 
                 return ReplyResult(
-                    message="Searching complete.",
+                    message=formatted_results,
                     context_variables=context_variables
                 )
 
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
+        if use_manager:
+            manager = LiteratureManagerAgent().create_agent(llm_config)
         searcher = LiteratureSearcherAgent().create_agent(
             llm_config,
             functions=[search_literature_papers],
@@ -145,7 +157,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             content = re.sub(r"\n?```$", "", content).strip()
             return content
 
-        def prepare_summary_input(output: Any, context_variables: ContextVariables) -> FunctionTargetResult:
+        def prepare_summary_input(output: Any, context_variables: ContextVariables):
             searching_results = context_variables.get("searching_results", [])
 
             unified_metadata: List[Dict[str, Any]] = []
@@ -262,38 +274,82 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                 )
 
             context_variables["unified_metadata"] = unified_metadata
+            return summary_prompt, context_variables
             return FunctionTargetResult(
                 target=AgentTarget(summarizer),
-                message=summary_prompt,
+                messages=summary_prompt,
                 context_variables=context_variables,
             )
 
+        def route_to_next_agent(output: Any, context_variables: ContextVariables) -> FunctionTargetResult:
+            state = context_variables.get("state", "start")
+            if state == "searched":
+                decision = str(output)
+                if "SEARCH_COMPLETE" in decision or not use_manager:
+                    context_variables["state"] = "completed"
+                    summary_prompt, context_variables = prepare_summary_input(output, context_variables)
+                    return FunctionTargetResult(
+                        target=AgentTarget(summarizer),
+                        messages=summary_prompt,
+                        context_variables=context_variables,
+                    )
+            
+            context_variables["state"] = "searching"
+            return FunctionTargetResult(
+                target=AgentTarget(searcher),
+                messages=LITERATRUE_SEARCH_PROMPT_WITH_MANAGER,
+                context_variables=context_variables,
+            )
+        
+        def manage_history_messages(messages: list[dict]) -> list[dict]:
+            """
+            Only keep the system message and the last message for the summarizer.
+            """
+            print(messages[-4:])
+            return [messages[-1]] # Last message
+        
         ctx = ContextVariables(data={
             "state": "start",
             "task": task,
             "searching_results": [],
         })
 
-        pattern = DefaultPattern(
-            initial_agent=searcher,
-            agents=[searcher, summarizer],
-            group_manager_args={"llm_config": llm_config},
-            context_variables=ctx,
-        )
+        if use_manager:
+            pattern = DefaultPattern(
+                initial_agent=manager,
+                agents=[searcher, summarizer, manager],
+                group_manager_args={"llm_config": llm_config},
+                context_variables=ctx,
+            )
+        else:
+            pattern = DefaultPattern(
+                initial_agent=searcher,
+                agents=[searcher, summarizer],
+                group_manager_args={"llm_config": llm_config},
+                context_variables=ctx,
+            )
 
-        searcher.handoffs.set_after_work(FunctionTarget(prepare_summary_input))
+        if use_manager:
+            manager.handoffs.set_after_work(FunctionTarget(route_to_next_agent))
+            searcher.handoffs.set_after_work(AgentTarget(manager))
+        else:
+            searcher.handoffs.set_after_work(FunctionTarget(route_to_next_agent))
         summarizer.register_hook(
             "process_all_messages_before_reply",
-            lambda messages: [messages[-1]] if messages else messages,
+            manage_history_messages
         )
         summarizer.handoffs.set_after_work(TerminateTarget())
 
-        prompt = LITERATURE_SEARCH_PROMPT.format(task=task, num_papers=num_papers)
+        if use_manager:
+            prompt = LITERATURE_MANAGER_INITIAL_PROMPT.format(task=task)
+        else:
+            prompt = LITERATURE_SEARCH_PROMPT.format(task=task, num_papers=num_papers)
+
 
         if state["config"]["researcher"]["iterable"]:
             result, context, _ = iterable_group_chat(
                 state,
-                max_rounds=10,
+                max_rounds=20,
                 enable_hitl=False,
                 pattern=pattern,
                 prompt=prompt,
@@ -302,7 +358,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             result, context, _ = initiate_group_chat(
                 pattern=pattern,
                 messages=prompt,
-                max_rounds=10,
+                max_rounds=20,
             )
 
         unified_metadata = context.get("unified_metadata", [])

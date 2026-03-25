@@ -42,6 +42,7 @@ researcher:
     max_rounds_summary: null
   literature_review:
     mode: "basic"
+    use_manager: false
     num_papers: 3
     # sources: ["arxiv", "pubmed", "semantic_scholar", "openalex", "crossref", "perplexity"]  # All sources
     # sources: ["arxiv", "pubmed", "openalex"]  # Sources without API

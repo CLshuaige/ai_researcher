@@ -4,6 +4,7 @@ from autogen import ConversableAgent
 from researcher.prompts.templates import (
     ASKER_SYSTEM_PROMPT,
     TASK_FORMATTER_SYSTEM_PROMPT,
+    LITERATURE_MANAGER_SYSTEM_PROMPT,
     LITERATURE_SEARCHER_SYSTEM_PROMPT,
     LITERATURE_SUMMARIZER_SYSTEM_PROMPT,
     IDEA_PROPOSER_SYSTEM_PROMPT,
@@ -100,6 +101,10 @@ class TaskFormatterAgent(BaseAgent):
 
 
 # Literature Review Module
+class LiteratureManagerAgent(BaseAgent):
+    def __init__(self, name: str = "LiteratureManager"):
+        super().__init__(name, LITERATURE_MANAGER_SYSTEM_PROMPT)
+
 class LiteratureSearcherAgent(BaseAgent):
     def __init__(self, name: str = "LiteratureSearcher"):
         super().__init__(name, LITERATURE_SEARCHER_SYSTEM_PROMPT)
