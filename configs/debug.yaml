@@ -65,7 +65,7 @@ researcher:
       # model_selector: "openai-free/gpt-5.3-codex"
       # base_url: "http://127.0.0.1:4096"
     human_in_the_loop: true
-    code_execution_timeout: 300  # seconds
+    code_execution_timeout: 1800  # seconds
     code_execution_retries: 5
     use_virtual_env: true
     virtual_env_path: "/home/ai_researcher/miniconda3/envs/ai_workspace"

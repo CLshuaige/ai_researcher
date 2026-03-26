@@ -17,6 +17,9 @@
       "models": {
         "gpt-5.2-codex": {
           "name": "gpt-5.2-codex",
+          "options": {
+            "reasoningEffort": "xhigh"
+          },
           "variants": {
             "medium": {},
             "high": {},
