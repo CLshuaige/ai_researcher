@@ -410,7 +410,7 @@ def iterable_group_chat(
     pattern = None,
     prompt: str = None,   
 ):
-    _publish_task_parsing_progress(
+    _publish_event_progress(
         state,
         "iterator_started",
         max_rounds=max_rounds,
@@ -430,7 +430,7 @@ def iterable_group_chat(
             print(f"\n{'─' * 60}")
             print(f"🎭 [{step}] {speaker}'s turn")
             print('─' * 60)
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "turn_started",
                 step=step,
@@ -444,7 +444,7 @@ def iterable_group_chat(
                 "name": sender,
                 "content": content
             })
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "message",
                 step=step,
@@ -454,7 +454,7 @@ def iterable_group_chat(
         elif isinstance(event, InputRequestEvent):
             prompt_text = str(event.content.prompt)
             request_id = str(uuid.uuid4())
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "input_requested",
                 step=step,
@@ -467,7 +467,7 @@ def iterable_group_chat(
             # 2. input from cli
             # user_input = input(prompt_text)
             event.content.respond(user_input)
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "input_submitted",
                 step=step,
@@ -475,7 +475,7 @@ def iterable_group_chat(
                 #user_input=user_input
             )
         elif isinstance(event, TerminationEvent):
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "termination",
                 step=step,
@@ -486,7 +486,7 @@ def iterable_group_chat(
             summary = event.content.summary
             context_vars = event.content.context_variables
             last_speaker = event.content.last_speaker
-            _publish_task_parsing_progress(
+            _publish_event_progress(
                 state,
                 "run_completion",
                 step=step,
@@ -506,13 +506,15 @@ def iterable_group_chat(
 
     return result, context, None
 
-def _publish_task_parsing_progress(
+def _publish_event_progress(
     state: ResearchState,
     progress_event: str,
     **extra: Any,
 ) -> None:
     """Publish per-iteration progress when API runtime is active."""
     project_id = state.get("project_id")
+    node = state.get("start_node")
+    stage = state.get("stage")
     if not project_id:
         return
 
@@ -532,8 +534,8 @@ def _publish_task_parsing_progress(
     payload = {
         "event": "node_progress",
         "project_id": project_id,
-        "node": "task_parsing",
-        "stage": "task_parsing",
+        "node": node,
+        "stage": stage,
         "progress_event": progress_event,
         "timestamp": datetime.now().isoformat(),
     }

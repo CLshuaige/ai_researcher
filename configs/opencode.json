@@ -4,7 +4,7 @@
     "port": 4096,
     "hostname": "172.23.21.21"
   },
-  "model": "qwen-local//home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "model": "openai-free/gpt-5.2-codex",
   "provider": {
     "openai-free": {
       "npm": "@ai-sdk/openai-compatible",
