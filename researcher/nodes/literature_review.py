@@ -24,6 +24,7 @@ from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent
 from researcher.utils import (
     save_markdown,
     save_json,
+    load_json,
     log_stage,
     get_artifact_path,
     load_artifact_from_file,
@@ -62,6 +63,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         num_papers = config["num_papers"]
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
+        test_summary = True
 
         llm_config = get_llm_config()
 
@@ -103,7 +105,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             llm_config,
             functions=[search_literature_papers],
         )
-        summarizer = LiteratureSummarizerAgent().create_agent(llm_config)
+        summarizer = LiteratureSummarizerAgent().create_agent(llm_config, enable_context_compression=False)
 
         def build_paper_blog(entry: Dict[str, Any]) -> str:
             parsed_md_path = Path(str(entry["parsed_md_path"]))
@@ -158,99 +160,128 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             return content
 
         def prepare_summary_input(output: Any, context_variables: ContextVariables):
-            searching_results = context_variables.get("searching_results", [])
-
-            unified_metadata: List[Dict[str, Any]] = []
-            sequence = 0
-            for source_result in searching_results:
-                source = str(source_result.get("source", "unknown"))
-                query = str(source_result.get("query", ""))
-                for paper in source_result.get("papers", []) or []:
-                    sequence += 1
-                    paper_uid = _build_paper_uid(source, sequence, paper)
-                    entry = {
-                        "paper_uid": paper_uid,
-                        "source": source,
-                        "query": query,
-                        "title": paper.get("title", ""),
-                        "authors": paper.get("authors", []) or [],
-                        "abstract": paper.get("abstract", "") or "",
-                        "url": paper.get("url", "") or "",
-                        "year": paper.get("year"),
-                        "arxiv_id": paper.get("arxiv_id"),
-                        "external_id": paper.get("external_id"),
-                        "doi": paper.get("doi"),
-                        "pdf_cached": paper.get("pdf_cached"),
-                        "pdf_path": paper.get("pdf_path"),
-                    }
-
-                    if mode == "detailed":
-                        entry.update(_prepare_paper_bundle(entry, workspace_dir))
-                    elif mode == "basic":
-                        entry.update({
-                            "parse_status": "basic_mode",
-                            "parser_used": "none",
-                            "paper_bundle_dir": "",
-                            "bundle_pdf_path": "",
-                            "parsed_md_path": "",
-                            "images_dir": "",
-                            "blog_path": "",
-                        })
-
-                    unified_metadata.append(entry)
-
             metadata_path = workspace_dir / "literature" / "metadata.json"
-            save_json(
-                {
-                    "generated_at": datetime.now().isoformat(),
-                    "task": task,
-                    "papers": unified_metadata,
-                },
-                metadata_path,
-            )
+            if not test_summary:
+                searching_results = context_variables.get("searching_results", [])
+
+                unified_metadata: List[Dict[str, Any]] = []
+                sequence = 0
+                for source_result in searching_results:
+                    source = str(source_result.get("source", "unknown"))
+                    query = str(source_result.get("query", ""))
+                    for paper in source_result.get("papers", []) or []:
+                        sequence += 1
+                        paper_uid = _build_paper_uid(source, sequence, paper)
+                        entry = {
+                            "paper_uid": paper_uid,
+                            "source": source,
+                            "query": query,
+                            "title": paper.get("title", ""),
+                            "authors": paper.get("authors", []) or [],
+                            "abstract": paper.get("abstract", "") or "",
+                            "url": paper.get("url", "") or "",
+                            "year": paper.get("year"),
+                            "arxiv_id": paper.get("arxiv_id"),
+                            "external_id": paper.get("external_id"),
+                            "doi": paper.get("doi"),
+                            "pdf_cached": paper.get("pdf_cached"),
+                            "pdf_path": paper.get("pdf_path"),
+                        }
+
+                        if mode == "detailed":
+                            entry.update(_prepare_paper_bundle(entry, workspace_dir))
+                        elif mode == "basic":
+                            entry.update({
+                                "parse_status": "basic_mode",
+                                "parser_used": "none",
+                                "paper_bundle_dir": "",
+                                "bundle_pdf_path": "",
+                                "parsed_md_path": "",
+                                "images_dir": "",
+                                "blog_path": "",
+                            })
+
+                        unified_metadata.append(entry)
+
+                save_json(
+                    {
+                        "generated_at": datetime.now().isoformat(),
+                        "task": task,
+                        "papers": unified_metadata,
+                    },
+                    metadata_path,
+                )
 
             # for blogs
             if mode == "detailed":
                 indexed_blogs: Dict[int, str] = {}
+                unified_metadata = load_json(metadata_path)["papers"]
                 max_workers = len(unified_metadata)
 
-                # build blogs in parallel
-                with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    futures = {
-                        pool.submit(build_paper_blog, entry): idx
-                        for idx, entry in enumerate(unified_metadata)
-                    }
-                    # wait for all blogs to be built
-                    for future in as_completed(futures):
-                        idx = futures[future]
-                        indexed_blogs[idx] = future.result()
-
-                # assemble blog blocks
                 blog_blocks: List[str] = []
-                for idx, entry in enumerate(unified_metadata, start=1):
-                    blog_content = indexed_blogs[idx - 1]
-                    blog_path = Path(str(entry["blog_path"]))
-                    blog_header = (
-                        "# Paper Metadata\n\n"
-                        f"- Title: {entry.get('title', '')}\n"
-                        f"- Authors: {', '.join(entry.get('authors', []))}\n"
-                        f"- Year: {entry.get('year')}\n"
-                        f"- Source: {entry.get('source', '')}\n"
-                        f"- URL: {entry.get('url', '')}\n"
-                        f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
-                        "---\n\n"
-                    )
-                    save_markdown(blog_header + blog_content, blog_path)
-                    markdown_to_pdf(blog_path)
+                if not test_summary:
+                    # build blogs in parallel
+                    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                        futures = {
+                            pool.submit(build_paper_blog, entry): idx
+                            for idx, entry in enumerate(unified_metadata)
+                        }
+                        # wait for all blogs to be built
+                        from tqdm import tqdm
+                        for future in tqdm(as_completed(futures), total=len(futures), desc="Building blogs"):
+                            idx = futures[future]
+                            indexed_blogs[idx] = future.result()
 
-                    citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
-                    blog_blocks.append(
-                        f"## Paper {idx}\n"
-                        f"- Citation Hint: {citation_hint}\n"
-                        "\n"
-                        f"{blog_header}{blog_content}"
-                    )
+                    # assemble blog blocks
+                    for idx, entry in enumerate(unified_metadata, start=1):
+                        blog_content = indexed_blogs[idx - 1]
+                        blog_path = Path(str(entry["blog_path"]))
+                        blog_header = (
+                            "# Paper Metadata\n\n"
+                            f"- Title: {entry.get('title', '')}\n"
+                            f"- Authors: {', '.join(entry.get('authors', []))}\n"
+                            f"- Year: {entry.get('year')}\n"
+                            f"- Source: {entry.get('source', '')}\n"
+                            f"- URL: {entry.get('url', '')}\n"
+                            f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
+                            "---\n\n"
+                        )
+                        save_markdown(blog_header + blog_content, blog_path)
+                        markdown_to_pdf(blog_path)
 
+                        citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
+                        blog_blocks.append(
+                            f"## Paper {idx}\n"
+                            f"- Citation Hint: {citation_hint}\n"
+                            "\n"
+                            f"{blog_header}{blog_content}"
+                        )
+
+                else:
+                    # load blogs from file
+                    for idx, entry in enumerate(unified_metadata, start=1):
+                        blog_path = Path(str(entry["blog_path"]))
+                        full_blog_content = load_markdown(blog_path) or ""
+
+                        blog_header = (
+                            "# Paper Metadata\n\n"
+                            f"- Title: {entry.get('title', '')}\n"
+                            f"- Authors: {', '.join(entry.get('authors', []))}\n"
+                            f"- Year: {entry.get('year')}\n"
+                            f"- Source: {entry.get('source', '')}\n"
+                            f"- URL: {entry.get('url', '')}\n"
+                            f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
+                            "---\n\n"
+                        )
+                        citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
+                        blog_blocks.append(
+                            f"## Paper {idx}\n"
+                            f"- Citation Hint: {citation_hint}\n"
+                            "\n"
+                            f"{full_blog_content}"
+                        )
+
+                
                 summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
                     task=task,
                     blogs_text="\n\n---\n\n".join(blog_blocks),
@@ -268,18 +299,13 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         f"Abstract: {entry.get('abstract', '')}\n"
                     )
 
-                summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
+                summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
                     papers="\n\n---\n\n".join(abstract_blocks),
                     task=task,
                 )
 
             context_variables["unified_metadata"] = unified_metadata
             return summary_prompt, context_variables
-            return FunctionTargetResult(
-                target=AgentTarget(summarizer),
-                messages=summary_prompt,
-                context_variables=context_variables,
-            )
 
         def route_to_next_agent(output: Any, context_variables: ContextVariables) -> FunctionTargetResult:
             state = context_variables.get("state", "start")
@@ -305,7 +331,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             """
             Only keep the system message and the last message for the summarizer.
             """
-            print(messages[-4:])
             return [messages[-1]] # Last message
         
         ctx = ContextVariables(data={
@@ -318,6 +343,13 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             pattern = DefaultPattern(
                 initial_agent=manager,
                 agents=[searcher, summarizer, manager],
+                group_manager_args={"llm_config": llm_config},
+                context_variables=ctx,
+            )
+        elif test_summary:
+            pattern = DefaultPattern(
+                initial_agent=summarizer,
+                agents=[summarizer],
                 group_manager_args={"llm_config": llm_config},
                 context_variables=ctx,
             )
@@ -342,6 +374,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         if use_manager:
             prompt = LITERATURE_MANAGER_INITIAL_PROMPT.format(task=task)
+        elif test_summary:
+            prompt = prepare_summary_input(None, ctx)[0]
         else:
             prompt = LITERATURE_SEARCH_PROMPT.format(task=task, num_papers=num_papers)
 

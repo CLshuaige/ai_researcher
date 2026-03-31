@@ -835,6 +835,37 @@ Output requirements:
 13. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
 """
 
+# LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
+
+# Task:
+# {task}
+
+# All Paper Blogs:
+# {blogs_text}
+
+# Requirements:
+# 1. Using Markdown.
+# 2. Academic style and complete literature-review structure.
+# 3. Use author-year citations in the main text.
+# 4. Build synthesis from blog evidence, not only abstract-level summaries.
+# 5. Cover as many of the mentioned papers as possible. The literature review should preserve the important information from the full set of papers rather than discussing only a small subset.
+# 6. Organize the review by logical relationships such as problem setting, methodological family, evidence pattern, limitation, or research gap. Use clear sectioning and paragraph structure so the reasoning is easy to follow.
+# 7. Prefer a thorough and information-rich review when supported by the source papers. More useful detail is better, as long as it remains evidence-based and well organized.
+# 8. From the images already retained in the blogs, keep only the images that are most important for the full literature review. 
+# 9. If the blogs contain any meaningful retained images, the literature review should preserve at least one of them.
+# 10. When you preserve an image, insert the exact markdown image syntax directly into the review and explain why that figure matters at the literature-review level.
+# 11. Include at least one Mermaid diagram that summarizes either literature relationships, methodological relationships, or both.
+# 12. The Mermaid output must be a valid fenced code block that starts with ```mermaid and can be rendered directly.
+# 13. Include at least one comparative table across papers.
+# 14. The output should be a rich literature review with integrated text, figures, Mermaid diagrams, and tables rather than prose alone.
+# 15. End with a References section using metadata entries.
+# 16. Strictly follow the evidence in the provided blogs. Do not invent methods, data, quantitative results, comparisons, causal claims, or research gaps that are not supported by the source papers.
+# 17. When evidence is limited, mixed, or missing, explicitly say so instead of filling gaps with plausible-sounding content.
+# 18. Use standard Markdown syntax throughout.
+# 19. For inline math, use `$...$`. For block math, use `$$...$$`.
+# 20. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
+# """
+
 LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
 
 Task:
@@ -843,27 +874,90 @@ Task:
 All Paper Blogs:
 {blogs_text}
 
-Requirements:
-1. Using Markdown.
-2. Academic style and complete literature-review structure.
-3. Use author-year citations in the main text.
-4. Build synthesis from blog evidence, not only abstract-level summaries.
-5. Cover as many of the mentioned papers as possible. The literature review should preserve the important information from the full set of papers rather than discussing only a small subset.
-6. Organize the review by logical relationships such as problem setting, methodological family, evidence pattern, limitation, or research gap. Use clear sectioning and paragraph structure so the reasoning is easy to follow.
-7. Prefer a thorough and information-rich review when supported by the source papers. More useful detail is better, as long as it remains evidence-based and well organized.
-8. From the images already retained in the blogs, keep only the images that are most important for the full literature review. 
-9. If the blogs contain any meaningful retained images, the literature review should preserve at least one of them.
-10. When you preserve an image, insert the exact markdown image syntax directly into the review and explain why that figure matters at the literature-review level.
-11. Include at least one Mermaid diagram that summarizes either literature relationships, methodological relationships, or both.
-12. The Mermaid output must be a valid fenced code block that starts with ```mermaid and can be rendered directly.
-13. Include at least one comparative table across papers.
-14. The output should be a rich literature review with integrated text, figures, Mermaid diagrams, and tables rather than prose alone.
-15. End with a References section using metadata entries.
-16. Strictly follow the evidence in the provided blogs. Do not invent methods, data, quantitative results, comparisons, causal claims, or research gaps that are not supported by the source papers.
-17. When evidence is limited, mixed, or missing, explicitly say so instead of filling gaps with plausible-sounding content.
-18. Use standard Markdown syntax throughout.
-19. For inline math, use `$...$`. For block math, use `$$...$$`.
-20. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
+=====================
+Core Requirements
+=====================
+
+1. Output strictly in Markdown.
+
+2. Use an academic literature-review style with clear sections (e.g., Introduction, Methodological Families, Comparative Analysis, Limitations, Future Directions).
+
+3. Use author-year citation format in the main text.
+
+4. Build synthesis from blog evidence (not shallow summaries). Focus on relationships between papers: problem setting, methodology, assumptions, evidence, and limitations.
+
+5. Cover as many papers as possible. Do not focus on only a small subset.
+
+6. Prefer depth and structured reasoning over brevity.
+
+7. Do NOT invent any facts, results, or claims not supported by the blogs. If evidence is missing or unclear, explicitly state it.
+
+=====================
+Math Rendering Constraints (CRITICAL for PDF)
+=====================
+
+8. For inline math, use `$...$`. For block math, use `$$...$$`.
+
+9. Only use simple LaTeX expressions compatible with MathJax:
+   - Allowed: fractions, superscripts, subscripts, sums, expectations, basic operators.
+   - Avoid: `\\begin{{align}}`, `\\begin{{equation}}`, `\\tag`, custom macros, or any LaTeX environments.
+
+10. Keep math minimal and only when necessary for understanding methods.
+
+=====================
+Image Preservation (STRICT REQUIREMENTS)
+=====================
+
+11. Detect all Markdown images in the blogs (format: `![](...)`).
+
+12. If ANY images exist in the blogs:
+   - You MUST include at least one image in the review.
+   - You MUST copy the EXACT original Markdown image string (no modification of path or URL).
+   - You MUST NOT rewrite, summarize, or alter image paths.
+
+13. Each included image MUST:
+   - Be placed inside a relevant section (not only at the end)
+   - Be explicitly referenced in the surrounding text (e.g., "Figure 1 shows ...")
+   - Be accompanied by an explanation of its role in understanding or comparing methods
+
+14. If images exist but none are included, the output is invalid.
+
+15. If multiple important images exist, prefer selecting the most informative one(s) rather than including all.
+
+=====================
+Structure Enhancements
+=====================
+
+16. If images are included, create a subsection:
+   "## Key Figures from the Literature"
+
+17. Include at least one comparative table across papers (methods, assumptions, strengths, limitations).
+
+18. Include at least one Mermaid diagram to summarize:
+   - method relationships, OR
+   - research landscape
+
+19. Mermaid must be a valid fenced block:
+   ```mermaid
+   graph TD
+   ...
+   ```
+20. Do NOT nest Mermaid inside other blocks.
+=====================
+Formatting for HTML→PDF Stability
+=====================
+21. Keep Markdown standard and simple (avoid HTML-heavy constructs unless necessary).
+22. Ensure Mermaid blocks and math blocks are separate and not interleaved.
+23. Do NOT rely on external LaTeX environments or advanced rendering features.
+=====================
+Output Requirements
+=====================
+24. The final output must integrate:
+- structured text
+- at least one figure (if available)
+- at least one Mermaid diagram
+- at least one comparative table
+24. End with a "## References" section using metadata entries derived from the blogs.
 """
 
 IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, achievable research idea:

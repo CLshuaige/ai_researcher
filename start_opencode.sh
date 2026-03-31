@@ -88,8 +88,10 @@ log "Using configuration: $CONFIG_PATH"
 ############################
 log "Starting OpenCode server..."
 
-# Set config via environment variable
+
 export OPENCODE_CONFIG="$CONFIG_PATH"
+export OPENCODE_EXPERIMENTAL=true
+export OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS=3600000
 
 exec opencode serve \
   --hostname "$HOST" \

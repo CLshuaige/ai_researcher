@@ -4,11 +4,11 @@
     "port": 4096,
     "hostname": "172.23.21.21"
   },
-  "model": "openai-free/gpt-5.2-codex",
+  "model": "openai-local/gpt-5.2-codex",
   "provider": {
-    "openai-free": {
+    "openai-local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "OpenAI-free",
+      "name": "OpenAI-local",
       "options": {
         "baseURL": "https://sub.jlypx.de/v1",
         "apiKey": "sk-8f6eb617e0b68f2761dd52715945ff6e0acbfac110d051e4c719c690a7762a27",
@@ -56,6 +56,17 @@
       }
     }
   },
+  "mcp": {
+    "async-bash": {
+      "type": "local",
+      "command": [
+        "bash",
+        "-lc",
+        "CONFIG_DIR=\"$(dirname \"$OPENCODE_CONFIG\")\"; REPO_ROOT=\"$(cd \"$CONFIG_DIR/..\" && pwd)\"; exec \"$REPO_ROOT/researcher/static/async-bash-mcp\""
+      ],
+      "enabled": true
+    }
+  },
   "tools": {
     "bash": true,
     "edit": true,
@@ -76,6 +87,10 @@
     "grep": "allow",
     "glob": "allow"
   },
-  "instructions": ["You are a scientific computing and research automation specialist. Focus on writing clean, efficient, reproducible code for experiments. Always validate results and handle errors gracefully."]
+  "instructions": [
+    "You are a scientific computing and research automation specialist. Focus on writing clean, efficient, reproducible code for experiments.",
+    "For downloads, training jobs, evaluations, or any command likely to run for more than a couple of minutes, prefer async-bash MCP tools when available.",
+    "Use built-in bash mainly for short foreground commands. If async-bash is unavailable and bash is required, set the bash timeout explicitly to the maximum allowed value."
+  ]
 }
   
