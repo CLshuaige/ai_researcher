@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional, Any, Dict
 from datetime import datetime
 import json
+import os
 import re
 import tempfile
 
@@ -116,6 +117,11 @@ def log_stage(workspace_dir: Path, stage: str, message: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"[{timestamp}] [{stage}] {message}\n")
+
+
+def get_relative_path(target_path: Path, base_dir: Path) -> str:
+    """Return POSIX-style relative path"""
+    return Path(os.path.relpath(target_path.resolve(), start=base_dir.resolve())).as_posix()
 
 
 def load_artifact_from_file(workspace_dir: Path, artifact_type: str) -> Optional[str]:
@@ -564,13 +570,59 @@ def _wait_for_user_input(request_id: str):
 
 
 # markdown -> html ->PDF
+def _render_markdown_math(markdown_text: str) -> str:
+    import latex2mathml.converter
+
+    def render_block(match: re.Match[str]) -> str:
+        expression = match.group(1).strip()
+        if not expression:
+            return match.group(0)
+        return f'\n<div class="math-block">{latex2mathml.converter.convert(expression)}</div>\n'
+
+    def render_inline(match: re.Match[str]) -> str:
+        expression = match.group(1).strip()
+        if not expression:
+            return match.group(0)
+        return f'<span class="math-inline">{latex2mathml.converter.convert(expression)}</span>'
+
+    segments = re.split(r"(```[\s\S]*?```|`[^`\n]+`)", markdown_text)
+    rendered_segments = []
+
+    for segment in segments:
+        if segment.startswith("```") or (segment.startswith("`") and segment.endswith("`")):
+            rendered_segments.append(segment)
+            continue
+
+        segment = re.sub(r"\$\$([\s\S]+?)\$\$", render_block, segment)
+        segment = re.sub(r"(?<!\\)\$(?!\$)([^\n$]+?)(?<!\\)\$(?!\$)", render_inline, segment)
+        rendered_segments.append(segment)
+
+    return "".join(rendered_segments)
+
+
+def _rewrite_html_local_image_sources(html: str, base_dir: Path) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for image in soup.find_all("img"):
+        src = str(image.get("src", "")).strip()
+        if not src or re.match(r"^(?:https?:|data:|file:)", src):
+            continue
+        resolved = (base_dir / src).resolve()
+        if resolved.exists():
+            image["src"] = resolved.as_uri()
+    return str(soup)
+
+
 def build_markdown_pdf_html(markdown_text: str, base_dir: Path, title: str) -> str:
     import markdown as md
 
+    markdown_text = _render_markdown_math(markdown_text)
     body = md.markdown(
         markdown_text,
         extensions=["extra", "fenced_code", "tables", "sane_lists"],
     )
+    body = _rewrite_html_local_image_sources(body, base_dir)
     mermaid_uri = (get_project_root() / "researcher" / "static" / "mermaid.min.js").resolve().as_uri()
     base_uri = base_dir.resolve().as_uri()
     return f"""<!doctype html>
@@ -610,6 +662,25 @@ def build_markdown_pdf_html(markdown_text: str, base_dir: Path, title: str) -> s
       margin: 16px auto;
       object-fit: contain;
       page-break-inside: avoid;
+    }}
+    .math-inline {{
+      display: inline-block;
+      vertical-align: middle;
+      max-width: 100%;
+    }}
+    .math-inline math {{
+      font-size: 1em;
+    }}
+    .math-block {{
+      display: block;
+      margin: 16px 0;
+      text-align: center;
+      page-break-inside: avoid;
+    }}
+    .math-block math {{
+      display: inline-block;
+      max-width: 100%;
+      font-size: 1.05em;
     }}
     table {{
       width: 100%;

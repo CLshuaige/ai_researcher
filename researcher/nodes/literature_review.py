@@ -3,6 +3,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Annotated
 import json
+import os
 import re
 import shutil
 
@@ -34,6 +35,7 @@ from researcher.utils import (
     iterable_group_chat,
     parse_json_from_response,
     markdown_to_pdf,
+    get_relative_path,
 )
 from researcher.prompts.templates import (
     LITERATURE_MANAGER_INITIAL_PROMPT,
@@ -108,7 +110,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         summarizer = LiteratureSummarizerAgent().create_agent(llm_config, enable_context_compression=False)
 
         def build_paper_blog(entry: Dict[str, Any]) -> str:
-            parsed_md_path = Path(str(entry["parsed_md_path"]))
+            parsed_md_path = _resolve_workspace_path(entry["parsed_md_path"], workspace_dir)
             paper_markdown = load_markdown(parsed_md_path) or ""
             images_text = (
                 "The parsed paper markdown above already contains the extracted figures at their insertion points. "
@@ -235,7 +237,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                     # assemble blog blocks
                     for idx, entry in enumerate(unified_metadata, start=1):
                         blog_content = indexed_blogs[idx - 1]
-                        blog_path = Path(str(entry["blog_path"]))
+                        blog_path = _resolve_workspace_path(entry["blog_path"], workspace_dir)
                         blog_header = (
                             "# Paper Metadata\n\n"
                             f"- Title: {entry.get('title', '')}\n"
@@ -250,35 +252,35 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         markdown_to_pdf(blog_path)
 
                         citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
+                        blog_content_for_summary = _rewrite_markdown_image_paths(
+                            blog_content,
+                            source_dir=blog_path.parent,
+                            target_dir=workspace_dir,
+                        )
                         blog_blocks.append(
                             f"## Paper {idx}\n"
                             f"- Citation Hint: {citation_hint}\n"
                             "\n"
-                            f"{blog_header}{blog_content}"
+                            f"{blog_header}{blog_content_for_summary}"
                         )
 
                 else:
                     # load blogs from file
                     for idx, entry in enumerate(unified_metadata, start=1):
-                        blog_path = Path(str(entry["blog_path"]))
+                        blog_path = _resolve_workspace_path(entry["blog_path"], workspace_dir)
                         full_blog_content = load_markdown(blog_path) or ""
 
-                        blog_header = (
-                            "# Paper Metadata\n\n"
-                            f"- Title: {entry.get('title', '')}\n"
-                            f"- Authors: {', '.join(entry.get('authors', []))}\n"
-                            f"- Year: {entry.get('year')}\n"
-                            f"- Source: {entry.get('source', '')}\n"
-                            f"- URL: {entry.get('url', '')}\n"
-                            f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
-                            "---\n\n"
-                        )
                         citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
+                        blog_content_for_summary = _rewrite_markdown_image_paths(
+                            full_blog_content,
+                            source_dir=blog_path.parent,
+                            target_dir=workspace_dir,
+                        )
                         blog_blocks.append(
                             f"## Paper {idx}\n"
                             f"- Citation Hint: {citation_hint}\n"
                             "\n"
-                            f"{full_blog_content}"
+                            f"{blog_content_for_summary}"
                         )
 
                 
@@ -467,7 +469,7 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
     pdf_path: Path | None = None
 
     if entry.get("pdf_path"):
-        candidate = Path(str(entry["pdf_path"]))
+        candidate = _resolve_workspace_path(entry["pdf_path"], workspace_dir)
         if candidate.exists():
             pdf_path = candidate
 
@@ -496,11 +498,11 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
         return {
             "parse_status": "metadata_only",
             "parser_used": "none",
-            "paper_bundle_dir": str(bundle_dir),
+            "paper_bundle_dir": get_relative_path(bundle_dir, workspace_dir),
             "bundle_pdf_path": "",
-            "parsed_md_path": str(parsed_md_path),
-            "images_dir": str(images_dir),
-            "blog_path": str(bundle_dir / "blog.md"),
+            "parsed_md_path": get_relative_path(parsed_md_path, workspace_dir),
+            "images_dir": get_relative_path(images_dir, workspace_dir),
+            "blog_path": get_relative_path(bundle_dir / "blog.md", workspace_dir),
         }
 
     bundle_dir = pdf_path.parent / pdf_path.stem
@@ -530,17 +532,16 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
 
             for image_idx, image_info in enumerate(page.get_images(full=True), start=1):
                 xref = image_info[0]
-                image_data = doc.extract_image(xref)
-                image_bytes = image_data.get("image")
-                if not image_bytes:
-                    continue
-                ext = image_data.get("ext", "png")
-                image_name = f"page_{page_idx:03d}_img_{image_idx:02d}.{ext}"
+                pixmap = fitz.Pixmap(doc, xref)
+                if pixmap.n >= 5:
+                    pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+                image_name = f"page_{page_idx:03d}_img_{image_idx:02d}.png"
                 image_path = images_dir / image_name
-                with open(image_path, "wb") as image_file:
-                    image_file.write(image_bytes)
+                pixmap.save(str(image_path))
+                pixmap = None
                 image_count += 1
-                chunk_lines.append(f"![Figure p{page_idx}-{image_idx}]({image_path})")
+                image_rel_path = get_relative_path(image_path, parsed_md_path.parent)
+                chunk_lines.append(f"![Figure p{page_idx}-{image_idx}]({image_rel_path})")
 
             sections.append("\n".join(chunk_lines).strip())
 
@@ -573,10 +574,28 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
     return {
         "parse_status": parse_status,
         "parser_used": parser_used,
-        "pdf_path": str(bundle_pdf_path),
-        "paper_bundle_dir": str(bundle_dir),
-        "bundle_pdf_path": str(bundle_pdf_path),
-        "parsed_md_path": str(parsed_md_path),
-        "images_dir": str(images_dir),
-        "blog_path": str(bundle_dir / "blog.md"),
+        "pdf_path": get_relative_path(bundle_pdf_path, workspace_dir),
+        "paper_bundle_dir": get_relative_path(bundle_dir, workspace_dir),
+        "bundle_pdf_path": get_relative_path(bundle_pdf_path, workspace_dir),
+        "parsed_md_path": get_relative_path(parsed_md_path, workspace_dir),
+        "images_dir": get_relative_path(images_dir, workspace_dir),
+        "blog_path": get_relative_path(bundle_dir / "blog.md", workspace_dir),
     }
+
+
+def _resolve_workspace_path(path_value: Any, workspace_dir: Path) -> Path:
+    path = Path(str(path_value))
+    return path if path.is_absolute() else workspace_dir / path
+
+
+def _rewrite_markdown_image_paths(markdown_text: str, source_dir: Path, target_dir: Path) -> str:
+    def replace(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        raw_path = match.group(2).strip()
+        if re.match(r"^(?:https?:|data:|file:|#)", raw_path):
+            return match.group(0)
+        resolved = (source_dir / raw_path).resolve()
+        relative_path = Path(os.path.relpath(resolved, start=target_dir.resolve())).as_posix()
+        return f"![{alt}]({relative_path})"
+
+    return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace, markdown_text)

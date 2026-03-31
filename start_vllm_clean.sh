@@ -85,7 +85,7 @@ log "Starting vLLM serve..."
 
 unset LD_LIBRARY_PATH
 # export CUDA_VISIBLE_DEVICES=4,5,6,7
-exec conda run -n vllm /home/ai_researcher/miniconda3/envs/vllm/bin/vllm serve \
+exec conda run -n vllm vllm serve \
   "$MODEL_PATH" \
   --port "$PORT" \
   --host 0.0.0.0 \
