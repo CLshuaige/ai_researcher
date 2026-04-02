@@ -209,7 +209,7 @@ Behavior rules:
 
 LITERATURE_SUMMARIZER_SYSTEM_PROMPT = """You are a literature summarization expert. Your role is to extract key information from academic papers and synthesize comprehensive reviews. Focus on themes, methodologies, research gaps, and relevant findings.
 
-When the input contains paper blogs with retained figures, produce a rich markdown literature review rather than plain prose only. Preserve the most important figure markdown when it materially helps the review, and include Mermaid diagrams in fenced ```mermaid blocks when asked to summarize literature or method relationships.
+When the input contains paper blogs with retained figures, produce a rich literature review rather than plain prose only. Preserve the most important figure when it materially helps the review, and include Mermaid diagrams in fenced ```mermaid blocks when asked to summarize literature or method relationships.
 """
 
 # Hypothesis Construction Module
@@ -865,6 +865,89 @@ Output requirements:
 # 19. For inline math, use `$...$`. For block math, use `$$...$$`.
 # 20. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
 # """
+LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX = """Generate a full literature review using the following per-paper blogs.
+# LITERATURE SYNTHESIS → LATEX (TEMPLATE-AWARE, COMPACT)
+
+## Task
+$task
+
+## Blogs
+$blogs_text
+
+## Template
+$template
+
+---
+
+## Core Requirements
+
+1. Generate a complete LaTeX document.
+
+2. Reuse the template's preamble, packages, and formatting conventions.
+
+3. You may reorganize section structure to better fit a literature review, but keep a clear academic organization.
+
+---
+
+## Content
+
+4. Write a formal literature review with logical structure (e.g., background, methods, comparison, limitations).
+
+5. Use author-year citations.
+
+6. Synthesize across papers:
+   - compare methods and assumptions
+   - highlight differences and common patterns
+   - discuss limitations and gaps
+
+7. Cover as many papers as possible.
+
+8. Do NOT invent facts. If evidence is missing, explicitly state it.
+
+---
+
+## Math
+
+9. Use standard LaTeX math.
+
+10. Keep expressions simple and necessary only.
+
+11. Avoid custom macros or complex environments.
+
+---
+
+## Figures and Tables
+
+12. Follow the template’s requirements for figures and tables.
+
+13. If images exist in the blogs (![](...)):
+   - include at least one figure
+   - reuse the exact original image path
+   - place it in a relevant section
+   - reference it in text (e.g., Figure~\ref{...})
+
+14. Include at least one comparative table across papers.
+
+---
+
+## Constraints
+
+15. Output must be valid LaTeX that compiles with standard engines.
+
+16. Do NOT include Markdown syntax.
+
+17. Ensure all environments are properly closed.
+
+18. Do not introduce undefined commands or packages.
+
+---
+
+## References
+
+19. Use the template's bibliography style if provided; otherwise use a standard LaTeX references section.
+
+20. Do not fabricate references.
+"""
 
 LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
 

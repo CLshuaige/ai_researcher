@@ -24,6 +24,13 @@ Modular scientific research automation system powered by LangGraph and AG2.
 pip install -r requirements.txt
 ```
 
+```bash
+#LaTex
+conda install anaconda::poppler      # pdftotext/pdfinfo                                                                                                              
+conda install conda-forge::chktex    # LaTeX语法检查                                                                                                                  
+sudo apt install texlive-latex-extra       # LaTeX编译环境
+```
+
 ## Configuration
 
 Copy `.env.example` to `.env` and configure:

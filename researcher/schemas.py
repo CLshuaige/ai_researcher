@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
+from .latex.utils import extract_latex_code
 
 
 class IdeaCandidate(BaseModel):
@@ -268,6 +269,9 @@ class LiteratureReview(BaseModel):
                 lines.append(f"\n{item.abstract}\n\n")
 
         return "".join(lines)
+    
+    def to_latex(self) -> str:
+        return extract_latex_code(self.synthesis)
 
 class ChatResult(BaseModel):
     """Chat result for group chat"""

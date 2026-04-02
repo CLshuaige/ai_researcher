@@ -43,6 +43,7 @@ researcher:
   literature_review:
     mode: "detailed"
     use_manager: false
+    output_format: "markdown"
     num_papers: 3
     # sources: ["arxiv", "pubmed", "semantic_scholar", "openalex", "crossref", "perplexity"]  # All sources
     # sources: ["arxiv", "pubmed", "openalex"]  # Sources without API

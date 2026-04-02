@@ -44,6 +44,7 @@ from researcher.prompts.templates import (
     LITERATURE_SUMMARY_PROMPT,
     LITERATURE_BLOG_PROMPT,
     LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT,
+    LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX
 )
 from researcher.exceptions import WorkflowError
 from researcher.integrations.literature_search import search_literature
@@ -63,6 +64,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         mode = config["mode"]
         use_manager = config.get("use_manager", False)
         num_papers = config["num_papers"]
+        format = config.get("output_format", "markdown").lower()
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
         test_summary = False
@@ -163,7 +165,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         def prepare_summary_input(output: Any, context_variables: ContextVariables):
             metadata_path = workspace_dir / "literature" / "metadata.json"
-            unified_metadata: List[Dict[str, Any]] = []
+            metadata_path = Path(metadata_path)
             if not test_summary:
                 searching_results = context_variables.get("searching_results", [])
                 sequence = 0
@@ -215,11 +217,12 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             elif metadata_path.exists():
                 unified_metadata = load_json(metadata_path).get("papers", [])
 
+
+            indexed_blogs: Dict[int, str] = {}
+            unified_metadata = load_json(metadata_path)["papers"]
+            max_workers = len(unified_metadata)
             # for blogs
             if mode == "detailed":
-                indexed_blogs: Dict[int, str] = {}
-                max_workers = len(unified_metadata)
-
                 blog_blocks: List[str] = []
                 if not test_summary:
                     # build blogs in parallel
@@ -283,11 +286,20 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                             f"{blog_content_for_summary}"
                         )
 
-                
-                summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
-                    task=task,
-                    blogs_text="\n\n---\n\n".join(blog_blocks),
-                )
+                if format == "latex":
+                    template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
+                    template_path = Path(template_path)
+                    template_content = load_markdown(template_path)
+                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX.format(
+                        task=task,
+                        blogs_text="\n\n---\n\n".join(blog_blocks),
+                        template=template_content,
+                    )
+                elif format == "markdown":
+                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
+                        task=task,
+                        blogs_text="\n\n---\n\n".join(blog_blocks),
+                    )
             else:
                 abstract_blocks: List[str] = []
                 for idx, entry in enumerate(unified_metadata, start=1):
@@ -301,10 +313,22 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         f"Abstract: {entry.get('abstract', '')}\n"
                     )
 
-                summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
-                    papers="\n\n---\n\n".join(abstract_blocks),
-                    task=task,
-                )
+                if format == "latex":
+                    template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
+                    template_path = Path(template_path)
+                    template_content = load_markdown(template_path)
+                    from string import Template
+                    prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
+                    summary_prompt = prompt_template.substitute(
+                        task=task,
+                        blogs_text="\n\n---\n\n".join(abstract_blocks),
+                        template=template_content,
+                    )
+                elif format == "markdown":
+                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
+                        task=task,
+                        blogs_text="\n\n---\n\n".join(abstract_blocks),
+                    )
 
             context_variables["unified_metadata"] = unified_metadata
             return summary_prompt, context_variables
@@ -436,8 +460,14 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         lit_dir.mkdir(exist_ok=True)
 
         lit_path = get_artifact_path(workspace_dir, "literature")
-        save_markdown(literature.to_markdown(), lit_path)
-        markdown_to_pdf(lit_path)
+        if format == "latex":
+            lit_path = lit_path.with_suffix(".tex")
+            latex_content = literature.to_latex()
+            save_markdown(latex_content, lit_path)
+            latex_to_pdf(lit_path)
+        elif format == "markdown":
+            save_markdown(literature.to_markdown(), lit_path)
+            markdown_to_pdf(lit_path)
 
         log_stage(workspace_dir, "literature_review", f"Completed. Found {len(literature_items)} papers")
 

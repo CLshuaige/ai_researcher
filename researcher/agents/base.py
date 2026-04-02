@@ -24,7 +24,7 @@ from researcher.prompts.templates import (
 )
 
 
-from researcher.agents.context_manager import AgentContextManager
+#from researcher.agents.context_manager import AgentContextManager
 
 
 class BaseAgent:
@@ -37,7 +37,7 @@ class BaseAgent:
     def create_agent(
         self,
         llm_config: Dict[str, Any],
-        enable_context_compression: Optional[bool] = None,
+        enable_context_compression: Optional[bool] = False,
         functions: Optional[List[Callable]] = None,
     ) -> ConversableAgent:
         """Create a ConversableAgent with automatic context compression.
