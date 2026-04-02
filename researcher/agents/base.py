@@ -24,7 +24,7 @@ from researcher.prompts.templates import (
 )
 
 
-#from researcher.agents.context_manager import AgentContextManager
+from researcher.agents.context_manager import AgentContextManager
 
 
 class BaseAgent:

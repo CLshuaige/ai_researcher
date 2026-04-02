@@ -35,6 +35,7 @@ from researcher.utils import (
     iterable_group_chat,
     parse_json_from_response,
     markdown_to_pdf,
+    latex_to_pdf,
     get_relative_path,
 )
 from researcher.prompts.templates import (
@@ -166,6 +167,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         def prepare_summary_input(output: Any, context_variables: ContextVariables):
             metadata_path = workspace_dir / "literature" / "metadata.json"
             metadata_path = Path(metadata_path)
+            unified_metadata: List[Dict[str, Any]] = []
             if not test_summary:
                 searching_results = context_variables.get("searching_results", [])
                 sequence = 0
@@ -214,9 +216,6 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                     },
                     metadata_path,
                 )
-            elif metadata_path.exists():
-                unified_metadata = load_json(metadata_path).get("papers", [])
-
 
             indexed_blogs: Dict[int, str] = {}
             unified_metadata = load_json(metadata_path)["papers"]

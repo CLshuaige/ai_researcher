@@ -799,3 +799,7 @@ def markdown_to_pdf(markdown_path: Path, pdf_path: Optional[Path] = None, title:
             browser.close()
 
     return pdf_path
+
+
+def latex_to_pdf():
+    pass
