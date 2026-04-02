@@ -2,7 +2,11 @@
 set -euo pipefail
 
 OPENCODE_PATTERN="opencode serve"
-CONFIG_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/configs/opencode.json"
+DEFAULT_CONFIG_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/configs/opencode.json"
+CONFIG_PATH="${OPENCODE_CONFIG:-$DEFAULT_CONFIG_PATH}"
+DEFAULT_WORKDIR="/home/ai_researcher/projects/ai_researcher/workspace"
+WORKDIR="${OPENCODE_WORKDIR:-$DEFAULT_WORKDIR}"
+MANAGED_MODE="${OPENCODE_MANAGED:-0}"
 WAIT_SECONDS=3
 
 log() {
@@ -24,36 +28,57 @@ fi
 log "OpenCode version: $(opencode --version 2>&1 || echo 'unknown')"
 
 ############################
-# 2. Stop existing OpenCode server
+# 2. Read port from config
 ############################
-log "Checking existing OpenCode server processes..."
-if pgrep -f "$OPENCODE_PATTERN" > /dev/null; then
-  log "Stopping existing OpenCode server (SIGTERM)..."
-  pkill -15 -f "$OPENCODE_PATTERN"
-  sleep $WAIT_SECONDS
+if [[ -n "${OPENCODE_HOST:-}" && -n "${OPENCODE_PORT:-}" ]]; then
+  HOST="$OPENCODE_HOST"
+  PORT="$OPENCODE_PORT"
+else
+  if ! read -r HOST PORT < <(python3 -c "import json; cfg=json.load(open('$CONFIG_PATH')); print(cfg['server']['hostname'], cfg['server']['port'])"); then
+    log "ERROR: Could not read host/port from config file: $CONFIG_PATH"
+    exit 1
+  fi
 fi
 
-# Fallback force kill
-if pgrep -f "$OPENCODE_PATTERN" > /dev/null; then
-  log "Force killing remaining OpenCode server (SIGKILL)..."
-  pkill -9 -f "$OPENCODE_PATTERN"
+if [[ "$MANAGED_MODE" != "1" ]]; then
+
+  ############################
+  # 3. Stop existing OpenCode server
+  ############################
+  log "Checking existing OpenCode server processes..."
+  if pgrep -f "$OPENCODE_PATTERN" > /dev/null; then
+    log "Stopping existing OpenCode server (SIGTERM)..."
+    pkill -15 -f "$OPENCODE_PATTERN"
+    sleep $WAIT_SECONDS
+  fi
+
+  # Fallback force kill
+  if pgrep -f "$OPENCODE_PATTERN" > /dev/null; then
+    log "Force killing remaining OpenCode server (SIGKILL)..."
+    pkill -9 -f "$OPENCODE_PATTERN"
+  fi
 fi
 
-############################
-# 3. Read port from config
-############################
-if ! read -r HOST PORT < <(python3 -c "import json; cfg=json.load(open('$CONFIG_PATH')); print(cfg['server']['hostname'], cfg['server']['port'])"); then
-  log "ERROR: Could not read host/port from config file: $CONFIG_PATH"
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  log "ERROR: Configuration file not found: $CONFIG_PATH"
   exit 1
 fi
 
 log "Using host $HOST and port $PORT from configuration"
+log "Using configuration: $CONFIG_PATH"
+log "Using workdir: $WORKDIR"
 
 ############################
 # 4. Clean up port
 ############################
 log "Checking port $PORT status..."
 if lsof -i :$PORT > /dev/null 2>&1; then
+  if [[ "$MANAGED_MODE" == "1" ]]; then
+    log "ERROR: Port $PORT is occupied in managed mode. Abort."
+    lsof -i :$PORT || true
+    exit 1
+  fi
+
   log "Port $PORT is occupied. Cleaning up..."
   lsof -i :$PORT || true
 
@@ -66,25 +91,15 @@ fi
 # 5. Final port check
 ############################
 if lsof -i :$PORT > /dev/null 2>&1; then
-  log "ERROR: Port $PORT is still not clean. Abort."
-  lsof -i :$PORT
+  log "ERROR: Could not read host/port from config file: $CONFIG_PATH"
+  lsof -i :$PORT || true
   exit 1
 fi
 
 log "Port $PORT is clean."
 
 ############################
-# 6. Verify configuration file
-############################
-if [ ! -f "$CONFIG_PATH" ]; then
-  log "ERROR: Configuration file not found: $CONFIG_PATH"
-  exit 1
-fi
-
-log "Using configuration: $CONFIG_PATH"
-
-############################
-# 7. Start OpenCode server
+# 6. Start OpenCode server
 ############################
 log "Starting OpenCode server..."
 
@@ -92,6 +107,8 @@ log "Starting OpenCode server..."
 export OPENCODE_CONFIG="$CONFIG_PATH"
 export OPENCODE_EXPERIMENTAL=true
 export OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS=3600000
+
+cd "$WORKDIR"
 
 exec opencode serve \
   --hostname "$HOST" \

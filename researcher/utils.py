@@ -736,7 +736,10 @@ def build_markdown_pdf_html(markdown_text: str, base_dir: Path, title: str) -> s
           container.textContent = code.textContent;
           code.parentElement.replaceWith(container);
         }});
-        if (document.querySelector(".mermaid") && typeof mermaid !== "undefined") {{
+        if (document.querySelector(".mermaid")) {{
+          if (typeof mermaid === "undefined") {{
+            throw new Error("Mermaid library failed to load");
+          }}
           mermaid.initialize({{ startOnLoad: false, securityLevel: "loose", theme: "default" }});
           await mermaid.run({{ querySelector: ".mermaid" }});
         }}
@@ -778,6 +781,10 @@ def markdown_to_pdf(markdown_path: Path, pdf_path: Optional[Path] = None, title:
             page = browser.new_page()
             page.goto(html_path.resolve().as_uri(), wait_until="load")
             page.wait_for_function("window.__MERMAID_READY === true", timeout=10000)
+            mermaid_error = page.evaluate("window.__MERMAID_ERROR")
+            if mermaid_error:
+                browser.close()
+                raise WorkflowError(f"Mermaid render failed for {markdown_path.name}: {mermaid_error}")
             page.pdf(
                 path=str(pdf_path),
                 format="A4",

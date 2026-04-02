@@ -943,21 +943,26 @@ Structure Enhancements
    ...
    ```
 20. Do NOT nest Mermaid inside other blocks.
+21. In Mermaid node labels, use plain text only.
+22. Do NOT use LaTeX, math delimiters such as `$...$`, backslashes, curly-brace math notation, or LaTeX commands inside Mermaid blocks.
+23. If a mathematical relation is important, explain it in normal Markdown text immediately before or after the Mermaid block instead of placing it inside the diagram.
+24. Keep Mermaid node labels short, simple, and readable. Prefer short English phrases over long technical sentences.
+25. Avoid HTML such as `<br>` inside Mermaid labels unless absolutely necessary.
 =====================
 Formatting for HTML→PDF Stability
 =====================
-21. Keep Markdown standard and simple (avoid HTML-heavy constructs unless necessary).
-22. Ensure Mermaid blocks and math blocks are separate and not interleaved.
-23. Do NOT rely on external LaTeX environments or advanced rendering features.
+26. Keep Markdown standard and simple (avoid HTML-heavy constructs unless necessary).
+27. Ensure Mermaid blocks and math blocks are separate and not interleaved.
+28. Do NOT rely on external LaTeX environments or advanced rendering features.
 =====================
 Output Requirements
 =====================
-24. The final output must integrate:
+29. The final output must integrate:
 - structured text
 - at least one figure (if available)
 - at least one Mermaid diagram
 - at least one comparative table
-24. End with a "## References" section using metadata entries derived from the blogs.
+30. End with a "## References" section using metadata entries derived from the blogs.
 """
 
 IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, achievable research idea:
@@ -1659,4 +1664,45 @@ CONSTRAINTS
 - Do NOT suggest vague actions such as "check the code"
 
 Focus on **clear modification guidance that a coding agent can implement**.
+"""
+
+
+OPENCODE_NOTE = """## Rules
+
+Integrity:
+Never fabricate data, results, logs, file contents, or execution outputs.
+All conclusions must come from real code execution. If required local data or files are missing but the needed dataset, package, documentation, checkpoint, or other materials may be publicly available, first use web tools to find an authoritative source and then proceed. Only state that something is unavailable after those checks fail.
+
+Execution Loop:
+Read -> Write/Edit -> Run -> Observe -> Verify -> Fix -> Re-run.
+Run the code after every change. Never assume code works without executing it.
+If outputs are empty, invalid, or incomplete, treat as failure and fix.
+For downloads, training jobs, evaluations, and other long-running commands, prefer async-bash MCP tools when available.
+Use built-in bash mainly for short foreground commands.
+If async-bash is unavailable and bash is required, set the bash tool timeout explicitly to 600000ms.
+Do not use nohup, disown, setsid, tmux, screen, or background `&` to keep jobs alive outside node lifecycle.
+When inputs mention a working path, step directory, output directory, or cache directory, create it directly with `mkdir -p` if it does not exist. Do not stop to confirm existence before creating it.
+
+Environment:
+Run code using conda environment:
+{env_path}
+
+Directory:
+Working directory:
+{exp_dir}
+
+Create all new files only inside this directory.
+If this working directory does not exist yet, create it immediately and continue.
+
+Scope:
+Allowed experiment root:
+{exp_root}
+Do not access files outside this root.
+
+Completion:
+The step is complete only if code executed successfully and required outputs are produced from real execution.
+No mock data, simulated results, or placeholder implementations.
+
+Report:
+Summarize executed code, generated files, logs, and real results.
 """

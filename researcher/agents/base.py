@@ -75,7 +75,7 @@ class BaseAgent:
 
             # Use global setting if not explicitly overridden
             if should_enable_compression is None:
-                should_enable_compression = context_config.get("enable_compression", True)
+                should_enable_compression = context_config.get("enable_compression", False)
 
             # Apply compression if enabled
             if should_enable_compression:

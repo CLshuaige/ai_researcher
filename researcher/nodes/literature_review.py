@@ -65,7 +65,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         num_papers = config["num_papers"]
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
-        test_summary = True
+        test_summary = False
 
         llm_config = get_llm_config()
 
@@ -163,10 +163,9 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
         def prepare_summary_input(output: Any, context_variables: ContextVariables):
             metadata_path = workspace_dir / "literature" / "metadata.json"
+            unified_metadata: List[Dict[str, Any]] = []
             if not test_summary:
                 searching_results = context_variables.get("searching_results", [])
-
-                unified_metadata: List[Dict[str, Any]] = []
                 sequence = 0
                 for source_result in searching_results:
                     source = str(source_result.get("source", "unknown"))
@@ -213,11 +212,12 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                     },
                     metadata_path,
                 )
+            elif metadata_path.exists():
+                unified_metadata = load_json(metadata_path).get("papers", [])
 
             # for blogs
             if mode == "detailed":
                 indexed_blogs: Dict[int, str] = {}
-                unified_metadata = load_json(metadata_path)["papers"]
                 max_workers = len(unified_metadata)
 
                 blog_blocks: List[str] = []
@@ -301,7 +301,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         f"Abstract: {entry.get('abstract', '')}\n"
                     )
 
-                summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
+                summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
                     papers="\n\n---\n\n".join(abstract_blocks),
                     task=task,
                 )

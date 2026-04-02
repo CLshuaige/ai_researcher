@@ -19,14 +19,18 @@ class OpenCodeClient:
     def __init__(
         self,
         base_url: str = "http://0.0.0.0:4096",
-        timeout: float = 300.0,
+        timeout: Optional[float] = None,
         config_file: Optional[Path] = None,
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
     ):
         if not OPENCODE_AVAILABLE:
             raise ImportError("opencode-ai not available")
-        self.client = Opencode(base_url=base_url, timeout=timeout)
+        self.client = Opencode(
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+        )
         self.session_id: Optional[str] = None
         self._work_dir: Optional[Path] = None
         self._provider_id = provider_id

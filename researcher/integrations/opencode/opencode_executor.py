@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, Any, Optional
+from researcher.prompts.templates import OPENCODE_NOTE
 
 try:
     from researcher.integrations.opencode import opencode_client
@@ -11,41 +12,6 @@ except ImportError as e:
     raise ImportError(f"OpenCode client import failed: {e}")
 
 
-OPENCODE_NOTE = """## Rules
-
-Integrity:
-Never fabricate data, results, logs, file contents, or execution outputs.
-All conclusions must come from real code execution. If required data or files are missing, state they are unavailable.
-
-Execution Loop:
-Read → Write/Edit → Run → Observe → Verify → Fix → Re-run.
-Run the code after every change. Never assume code works without executing it.
-If outputs are empty, invalid, or incomplete, treat as failure and fix.
-
-Environment:
-Run code using conda environment:
-{env_path}
-
-Directory:
-Working directory:
-{exp_dir}
-
-Create all new files only inside this directory.
-
-Scope:
-Allowed experiment root:
-{exp_root}
-Do not access files outside this root.
-
-Completion:
-The step is complete only if code executed successfully and required outputs are produced from real execution.
-No mock data, simulated results, or placeholder implementations.
-
-Report:
-Summarize executed code, generated files, logs, and real results.
-"""
-
-
 
 
 class OpenCodeExecutor:
@@ -54,7 +20,7 @@ class OpenCodeExecutor:
     def __init__(
         self,
         opencode_base_url: str = "http://0.0.0.0:4096",
-        timeout: float = 300.0,
+        timeout: Optional[float] = None,
         config_file: Optional[Path] = None,
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
@@ -79,9 +45,9 @@ class OpenCodeExecutor:
 
         exp_root = workspace_dir.parent if workspace_dir.name.startswith("step_") else workspace_dir
         full_instruction = OPENCODE_NOTE.format(
-            exp_dir=workspace_dir,
-            exp_root=exp_root,
-            env_path=env_path,
+            exp_dir=str(workspace_dir),
+            exp_root=str(exp_root),
+            env_path=str(env_path),
         ) + "\n\n" + instruction
 
         with OpenCodeClient(
@@ -119,7 +85,7 @@ def opencode_codebase_experiment(
     session_id: Optional[str] = None,
     *,
     opencode_base_url: str = "http://localhost:4096",
-    timeout: float = 300.0,
+    timeout: Optional[float] = None,
     config_file: Optional[Path] = None,
     provider_id: Optional[str] = None,
     model_id: Optional[str] = None,

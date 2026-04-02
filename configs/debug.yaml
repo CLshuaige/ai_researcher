@@ -41,7 +41,7 @@ researcher:
     max_rounds_download: null
     max_rounds_summary: null
   literature_review:
-    mode: "basic"
+    mode: "detailed"
     use_manager: false
     num_papers: 3
     # sources: ["arxiv", "pubmed", "semantic_scholar", "openalex", "crossref", "perplexity"]  # All sources
@@ -85,19 +85,19 @@ researcher:
   # Context Management Settings
   context_management:
     # Global context compression settings
-    enable_compression: true
+    enable_compression: false
     compression_threshold: 0.7  # Compress when token count exceeds of max context (must be <= safety_margin)
     max_context_tokens: null  # Maximum context tokens (null = auto-infer from model)
     safety_margin: 0.9  # Safety margin for token limiting
 
     # Compression settings
     compression:
-      enable_text_compression: true
+      enable_text_compression: false
       compression_params: {}  # Additional parameters for TextMessageCompressor
 
     # Token limiting settings
     token_limiting:
-      enable_token_limiting: true
+      enable_token_limiting: false
 
     # Message history settings
     message_history:

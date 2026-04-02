@@ -7,6 +7,7 @@ OpenCode executor. Usage:
 
 from pathlib import Path
 from typing import Dict, Any, Optional
+from researcher.prompts.templates import OPENCODE_NOTE
 
 try:
     import opencode_client
@@ -16,11 +17,6 @@ try:
     OPENCODE_AVAILABLE = check_opencode_availability()
 except ImportError as e:
     raise ImportError(f"OpenCode client import failed: {e}")
-
-
-OPENCODE_NOTE = """## Workflow
-- After writing or changing code, run it automatically. Use the run result to decide whether to fix or extend the program; repeat until the instruction is fully satisfied.
-- Prefer **edit** for small changes; use **read** before editing. Then summarize the experiment result so that reading the summary alone is enough to understand the result of this step."""
 
 
 
@@ -48,7 +44,11 @@ class OpenCodeExecutor:
 
     async def execute_instruction(self, instruction: str, workspace_dir: Path) -> Dict[str, Any]:
         # Prepend debugging guidance to instruction
-        full_instruction = OPENCODE_NOTE + "\n\n" + instruction
+        full_instruction = OPENCODE_NOTE.format(
+            exp_dir=str(workspace_dir),
+            exp_root=str(workspace_dir),
+            env_path="Use the active environment for this workspace.",
+        ) + "\n\n" + instruction
 
         async with OpenCodeClient(
             base_url=self.opencode_base_url,

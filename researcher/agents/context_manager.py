@@ -284,14 +284,14 @@ class AgentContextManager:
             llm_config: Optional LLM configuration.
         """
         # Extract settings from config
-        enable_compression = config.get("enable_compression", True)
+        enable_compression = config.get("enable_compression", False)
         compression_threshold = config.get("compression_threshold", 0.8)
         max_context_tokens = config.get("max_context_tokens")
         safety_margin = config.get("safety_margin", 0.9)
 
         # Compression settings
         compression_config = config.get("compression", {})
-        enable_text_compression = compression_config.get("enable_text_compression", True)
+        enable_text_compression = compression_config.get("enable_text_compression", False)
         compression_params = compression_config.get("compression_params", {})
 
         # Token limiting settings

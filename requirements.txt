@@ -7,6 +7,7 @@ langchain-openai==1.1.7
 
 # Multi-agent framework
 autogen==0.10.4
+autogen_agentchat==0.7.5
 
 # API clients
 openai==2.15.0

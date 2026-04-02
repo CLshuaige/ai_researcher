@@ -2,9 +2,9 @@
   "$schema": "https://opencode.ai/config.json",
   "server": {
     "port": 4096,
-    "hostname": "172.23.21.21"
+    "hostname": "172.22.162.99"
   },
-  "model": "openai-local/gpt-5.2-codex",
+  "model": "openai-local/gpt-5.3-codex",
   "provider": {
     "openai-local": {
       "npm": "@ai-sdk/openai-compatible",
@@ -15,10 +15,10 @@
         "wire_api": "responses"
       },
       "models": {
-        "gpt-5.2-codex": {
-          "name": "gpt-5.2-codex",
+        "gpt-5.3-codex": {
+          "name": "gpt-5.3-codex",
           "options": {
-            "reasoningEffort": "xhigh"
+            "reasoningEffort": "high"
           },
           "variants": {
             "medium": {},
@@ -60,9 +60,7 @@
     "async-bash": {
       "type": "local",
       "command": [
-        "bash",
-        "-lc",
-        "CONFIG_DIR=\"$(dirname \"$OPENCODE_CONFIG\")\"; REPO_ROOT=\"$(cd \"$CONFIG_DIR/..\" && pwd)\"; exec \"$REPO_ROOT/researcher/static/async-bash-mcp\""
+        "/home/ai_researcher/projects/ai_researcher/researcher/static/async-bash-mcp"
       ],
       "enabled": true
     }
@@ -89,8 +87,11 @@
   },
   "instructions": [
     "You are a scientific computing and research automation specialist. Focus on writing clean, efficient, reproducible code for experiments.",
-    "For downloads, training jobs, evaluations, or any command likely to run for more than a couple of minutes, prefer async-bash MCP tools when available.",
-    "Use built-in bash mainly for short foreground commands. If async-bash is unavailable and bash is required, set the bash timeout explicitly to the maximum allowed value."
+    "For downloads, training jobs, evaluations, and other long-running commands, prefer async-bash MCP tools when available.",
+    "If required datasets, checkpoints, packages, or documentation are missing locally but may be public, proactively use web tools to find an authoritative source before concluding they are unavailable.",
+    "If a referenced working directory or output path does not exist, create it directly with mkdir -p and continue instead of stopping to confirm its existence.",
+    "Do not launch detached or background jobs that outlive the current node execution. Avoid nohup, disown, setsid, tmux, screen, and background & for persistent work.",
+    "Use built-in bash mainly for short attached foreground commands. "
   ]
 }
   
