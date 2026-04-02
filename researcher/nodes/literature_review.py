@@ -78,7 +78,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         format = config.get("output_format", "markdown").lower()
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
-        test_summary = False
+        test_summary = True
 
         llm_config = get_llm_config()
 
@@ -301,20 +301,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                             f"{blog_content_for_summary}"
                         )
 
-                if format == "latex":
-                    template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
-                    template_path = Path(template_path)
-                    template_content = load_markdown(template_path)
-                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX.format(
-                        task=task,
-                        blogs_text="\n\n---\n\n".join(blog_blocks),
-                        template=template_content,
-                    )
-                elif format == "markdown":
-                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
-                        task=task,
-                        blogs_text="\n\n---\n\n".join(blog_blocks),
-                    )
+                summary_prompt = _construct_summay_prompt(task, blog_blocks, format, mode)
             else:
                 abstract_blocks: List[str] = []
                 for idx, entry in enumerate(unified_metadata, start=1):
@@ -328,22 +315,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         f"Abstract: {entry.get('abstract', '')}\n"
                     )
 
-                if format == "latex":
-                    template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
-                    template_path = Path(template_path)
-                    template_content = load_markdown(template_path)
-                    from string import Template
-                    prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
-                    summary_prompt = prompt_template.substitute(
-                        task=task,
-                        blogs_text="\n\n---\n\n".join(abstract_blocks),
-                        template=template_content,
-                    )
-                elif format == "markdown":
-                    summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
-                        task=task,
-                        blogs_text="\n\n---\n\n".join(abstract_blocks),
-                    )
+                summary_prompt = _construct_summay_prompt(task, abstract_blocks, format, mode)
 
             context_variables["unified_metadata"] = unified_metadata
             return summary_prompt, context_variables
@@ -644,3 +616,40 @@ def _rewrite_markdown_image_paths(markdown_text: str, source_dir: Path, target_d
         return f"![{alt}]({relative_path})"
 
     return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace, markdown_text)
+
+def _construct_summay_prompt(task: str, blog_blocks: List[str], format: str, mode: str) -> str:
+    if mode == "detailed":
+        if format == "latex":
+            template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
+            template_path = Path(template_path)
+            template_content = load_markdown(template_path)
+            from string import Template
+            prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
+            summary_prompt = prompt_template.substitute(
+                task=task,
+                blogs_text="\n\n---\n\n".join(blog_blocks),
+                template=template_content,
+            )
+        elif format == "markdown":
+            summary_prompt = LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT.format(
+                task=task,
+                blogs_text="\n\n---\n\n".join(blog_blocks),
+            )
+    if mode == "basic":
+        if format == "latex":
+            template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
+            template_path = Path(template_path)
+            template_content = load_markdown(template_path)
+            from string import Template
+            prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
+            summary_prompt = prompt_template.substitute(
+                task=task,
+                blogs_text="\n\n---\n\n".join(blog_blocks),
+                template=template_content,
+            )
+        elif format == "markdown":
+            summary_prompt = LITERATURE_SUMMARY_PROMPT.format(
+                task=task,
+                papers="\n\n---\n\n".join(blog_blocks),
+            )
+    return summary_prompt
