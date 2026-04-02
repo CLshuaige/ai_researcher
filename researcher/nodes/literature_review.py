@@ -31,7 +31,9 @@ from researcher.utils import (
     load_artifact_from_file,
     load_markdown,
     get_llm_config,
+    load_session_metadata,
     save_agent_history,
+    save_session_metadata,
     iterable_group_chat,
     parse_json_from_response,
     markdown_to_pdf,
@@ -56,7 +58,15 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "literature_review", "Starting literature review")
 
+    def set_sub_stage(sub_stage: str | None) -> None:
+        session = load_session_metadata(workspace_dir) or {}
+        session["stage"] = "literature_review"
+        session["sub_stage"] = sub_stage
+        session["updated_at"] = datetime.now().isoformat()
+        save_session_metadata(workspace_dir, session)
+
     try:
+        set_sub_stage(None)
         task = load_artifact_from_file(workspace_dir, "task")
         if not task:
             raise WorkflowError("Task file not found")
@@ -224,6 +234,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             if mode == "detailed":
                 blog_blocks: List[str] = []
                 if not test_summary:
+                    set_sub_stage("blog_generating")
                     # build blogs in parallel
                     with ThreadPoolExecutor(max_workers=max_workers) as pool:
                         futures = {
@@ -234,7 +245,12 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         from tqdm import tqdm
                         for future in tqdm(as_completed(futures), total=len(futures), desc="Building blogs"):
                             idx = futures[future]
-                            indexed_blogs[idx] = future.result()
+                            try:
+                                indexed_blogs[idx] = future.result()
+                            except Exception:
+                                set_sub_stage("blog_failed")
+                                raise
+                    set_sub_stage("blog_completed")
 
                     # assemble blog blocks
                     for idx, entry in enumerate(unified_metadata, start=1):

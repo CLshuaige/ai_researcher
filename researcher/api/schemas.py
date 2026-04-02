@@ -68,6 +68,7 @@ class NodeProcess(BaseModel):
 class NodeResult(BaseModel):
     node: str
     stage: str
+    sub_stage: Optional[str] = None # 用于前端展示当前子阶段，目前仅用于 blog_generating
     status: str # 用于前端展示当前状态，检测到status为completed时展示artifacts字段的内容。
     next_node: Optional[str] = None 
     process: NodeProcess
@@ -92,6 +93,7 @@ class ProjectStatusResponse(BaseModel):
     project_name: str 
     status: str
     stage: str
+    sub_stage: Optional[str] = None
     run_mode: str
     workspace_dir: str
     updated_at: Optional[str] = None

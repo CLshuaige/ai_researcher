@@ -197,6 +197,7 @@ class APIProjectService:
         return mapping.get(node_name, [])
 
     def _build_node_result(self, workspace_dir: Path, node_name: str, delta: Dict[str, Any]) -> NodeResult:
+        session = load_session_metadata(workspace_dir) or {}
         history_file = self._latest_history_file(workspace_dir, node_name)
         artifacts: List[str] = []
         for rel in self._artifact_candidates_for_node(node_name):
@@ -208,6 +209,9 @@ class APIProjectService:
         output["workspace_dir"] = str(workspace_dir)
 
         stage = str(delta.get("stage") or node_name)
+        sub_stage = delta.get("sub_stage")
+        if sub_stage is None and str(session.get("stage")) == node_name:
+            sub_stage = session.get("sub_stage")
         if "status" in delta:
             status = str(delta.get("status"))
         elif delta.get("error"):
@@ -220,6 +224,7 @@ class APIProjectService:
         return NodeResult(
             node=node_name,
             stage=stage,
+            sub_stage=str(sub_stage) if sub_stage is not None else None,
             status=status,
             next_node=delta.get("next_node"),
             process=NodeProcess(
@@ -256,6 +261,7 @@ class APIProjectService:
             "run_mode": request.mode,
             "status": "idle",
             "stage": "initialization",
+            "sub_stage": None,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
         }
@@ -302,6 +308,7 @@ class APIProjectService:
             project_name=session.get("project_name", "unknown"),
             status=session.get("status", "unknown"),
             stage=session.get("stage", "unknown"),
+            sub_stage=session.get("sub_stage"),
             run_mode=session.get("run_mode", "step"),
             workspace_dir=str(workspace_dir),
             updated_at=session.get("updated_at"),
@@ -336,6 +343,7 @@ class APIProjectService:
                     project_name=session.get("project_name", "unknown"),
                     status=session.get("status", "unknown"),
                     stage=session.get("stage", "unknown"),
+                    sub_stage=session.get("sub_stage"),
                     run_mode=session.get("run_mode", "step"),
                     workspace_dir=str(workspace_dir),
                     updated_at=session.get("updated_at"),
@@ -370,6 +378,7 @@ class APIProjectService:
 
             session["status"] = "running"
             session["stage"] = "initialization"
+            session["sub_stage"] = None
             session["run_mode"] = run_mode
             session["updated_at"] = datetime.now().isoformat()
             session["last_run_id"] = run_id
@@ -379,6 +388,7 @@ class APIProjectService:
                 {
                     "status": session["status"],
                     "stage": session["stage"],
+                    "sub_stage": session["sub_stage"],
                     "run_mode": session["run_mode"],
                     "updated_at": session["updated_at"],
                     "last_run_id": session["last_run_id"],
@@ -662,6 +672,21 @@ class APIProjectService:
 
     def latest_node_result(self, project_id: str, node_name: str) -> NodeResult:
         workspace_dir = self._resolve_workspace(project_id)
+        session = load_session_metadata(workspace_dir) or {}
+
+        if (
+            session.get("status") == "running"
+            and session.get("stage") == node_name
+        ):
+            return self._build_node_result(
+                workspace_dir,
+                node_name,
+                {
+                    "stage": node_name,
+                    "sub_stage": session.get("sub_stage"),
+                    "status": "running",
+                },
+            )
 
         # TODO
         runs_dir = workspace_dir / "runs"

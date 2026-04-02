@@ -145,6 +145,7 @@ class AIResearcher:
             "project_name": self.project_name,
             "status": "running",
             "stage": "initialization",
+            "sub_stage": None,
             "run_mode": run_mode,
             "config": runtime_config,
             "input_text": input_text,
@@ -188,8 +189,11 @@ class AIResearcher:
         self.current_state = final_state
 
         # Update session metadata
+        session_data = load_session_metadata(self.workspace_dir) or session_data
         session_data["status"] = "completed" if not final_state.get("error") else "failed"
         session_data["stage"] = final_state["stage"]
+        if final_state["stage"] != "literature_review":
+            session_data["sub_stage"] = None
         session_data["completed_at"] = datetime.now().isoformat()
         session_data["updated_at"] = datetime.now().isoformat()
         save_session_metadata(self.workspace_dir, session_data)
