@@ -50,7 +50,6 @@ Thumbs.db
 
 # Research artifacts
 *.pdf
-*.tex
 *.aux
 *.bbl
 *.blg

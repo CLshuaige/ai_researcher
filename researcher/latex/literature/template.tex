@@ -1,0 +1,320 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{natbib}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% ================= 图像使用规范（供生成模型参考） =================
+% 使用如下标准格式插入图片：
+%
+% \begin{figure}[htbp]
+% \centering
+% \includegraphics[width=0.8\linewidth]{path/to/image}
+% \caption{Descriptive caption explaining the figure in the context of the literature.}
+% \label{fig:unique_label}
+% \end{figure}
+%
+% 要求：
+% 1. 图片路径必须使用原始路径（不要修改或重写）
+% 2. 每个图片必须有 \caption 和 \label
+% 3. 在正文中使用如下方式引用：
+%    Figure~\ref{fig:unique_label}
+% 4. 图片应放置在相关内容附近（不要集中在文末）
+% ============================================================
+
+% 页面设置
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+% 页眉页脚
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{Literature Review}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% 标题格式
+\titleformat{\section}{\Large\bfseries\color{blue!50!black}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue!30!black}}{\thesubsection}{1em}{}
+
+% 超链接颜色
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=green!50!black,
+    urlcolor=blue!70!black
+}
+
+\begin{filecontents}{references.bib}
+% 示例参考文献，请替换为实际引用
+@article{example2024,
+  title={Example Paper for Literature Review},
+  author={Author, Example},
+  journal={Journal of Examples},
+  volume={1},
+  number={1},
+  pages={1--10},
+  year={2024},
+  publisher={Example Publisher}
+}
+
+@inproceedings{sample2023,
+  title={Sample Conference Paper},
+  author={Sample, Author and Test, Researcher},
+  booktitle={Proceedings of the Example Conference},
+  pages={100--110},
+  year={2023}
+}
+\end{filecontents}
+
+% ========== 标题信息 ==========
+\title{\textbf{Literature Review: [Your Research Topic]}}
+\author{Your Name \\
+        Your Institution \\
+        \texttt{your.email@example.com}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% ========== 摘要 ==========
+\begin{abstract}
+\noindent
+\textbf{Purpose:} Briefly describe the purpose and scope of this literature review. \\
+\textbf{Methods:} Describe your search strategy and selection criteria. \\
+\textbf{Findings:} Summarize the key findings from the reviewed literature. \\
+\textbf{Conclusions:} State the main conclusions and implications.
+
+\vspace{0.5em}
+\noindent\textbf{Keywords:} keyword1, keyword2, keyword3, keyword4
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ========== 1. 引言 ==========
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Background}
+Provide background information on the research topic. Explain why this topic is important and relevant to your field of study.
+
+\subsection{Research Questions}
+Clearly state the research questions or objectives of this literature review:
+\begin{enumerate}
+    \item What are the main research questions you aim to answer?
+    \item What specific aspects of the topic will you focus on?
+    \item What gaps in the literature are you trying to identify?
+\end{enumerate}
+
+\subsection{Scope and Limitations}
+Define the scope of your review:
+\begin{itemize}
+    \item Time period covered (e.g., papers from 2010-2024)
+    \item Types of sources (e.g., peer-reviewed journals, conference papers)
+    \item Geographic or domain limitations
+    \item Any exclusion criteria
+\end{itemize}
+
+% ========== 2. 研究方法 ==========
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Search Strategy}
+Describe your systematic search approach:
+\begin{itemize}
+    \item Databases used (e.g., Google Scholar, IEEE Xplore, PubMed)
+    \item Search terms and keywords
+    \item Date of search
+    \item Any snowballing or citation tracking methods
+\end{itemize}
+
+\subsection{Selection Criteria}
+Explain your inclusion and exclusion criteria:
+\begin{itemize}
+    \item \textbf{Inclusion criteria:} What characteristics must papers have to be included?
+    \item \textbf{Exclusion criteria:} What characteristics would disqualify a paper?
+\end{itemize}
+
+\subsection{Data Extraction}
+Describe how you extracted and organized information from the selected papers.
+
+% ========== 3. 文献分类框架 ==========
+\section{Thematic Framework}
+\label{sec:framework}
+
+Present your taxonomy or classification scheme for organizing the literature. This could be:
+
+\subsection{Chronological}
+Organize by time periods or development phases.
+
+\subsection{Methodological}
+Group papers by research methods used (e.g., experimental, theoretical, survey-based).
+
+\subsection{Thematic}
+Categorize by themes, topics, or research questions.
+
+% ========== 4. 文献综述主体 ==========
+\section{Review of Literature}
+\label{sec:review}
+
+\subsection{Theme 1: [First Major Theme]}
+\label{subsec:theme1}
+
+Summarize the key papers in this theme. For each paper, discuss:
+\begin{itemize}
+    \item Research objectives and questions
+    \item Methodology used
+    \item Key findings and contributions
+    \item Strengths and limitations
+\end{itemize}
+
+\textbf{Key Papers:}
+\begin{itemize}
+    \item \cite{example2024} - Brief description of contribution
+    \item \cite{sample2023} - Brief description of contribution
+\end{itemize}
+
+\subsection{Theme 2: [Second Major Theme]}
+\label{subsec:theme2}
+
+Continue with the same structure for each major theme...
+
+\subsection{Theme 3: [Third Major Theme]}
+\label{subsec:theme3}
+
+Add more subsections as needed to cover all relevant themes...
+
+% ========== 5. 比较分析 ==========
+\section{Comparative Analysis}
+\label{sec:comparison}
+
+\subsection{Cross-Theme Comparison}
+Compare and contrast findings across different themes. Use tables for clarity:
+
+\begin{table}[htbp]
+\centering
+\caption{Comparison of Key Approaches}
+\label{tab:comparison}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Approach} & \textbf{Advantages} & \textbf{Limitations} & \textbf{Best For} \\
+\midrule
+Method A & Advantage 1, 2 & Limitation 1, 2 & Scenario X \\
+Method B & Advantage 3, 4 & Limitation 3, 4 & Scenario Y \\
+Method C & Advantage 5, 6 & Limitation 5, 6 & Scenario Z \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Trend Analysis}
+Identify trends and patterns in the literature over time:
+\begin{itemize}
+    \item Emerging research directions
+    \item Shifting paradigms or methodologies
+    \item Increasing/decreasing interest in specific topics
+\end{itemize}
+
+% ========== 6. 研究空白 ==========
+\section{Research Gaps}
+\label{sec:gaps}
+
+Based on your review, identify the main gaps in the existing literature:
+
+\begin{enumerate}
+    \item \textbf{Gap 1:} Description of the first identified gap
+    \item \textbf{Gap 2:} Description of the second identified gap
+    \item \textbf{Gap 3:} Description of additional gaps
+\end{enumerate}
+
+For each gap, explain:
+\begin{itemize}
+    \item Why it is a significant gap
+    \item What opportunities it presents for future research
+    \item Potential challenges in addressing it
+\end{itemize}
+
+% ========== 7. 讨论 ==========
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Synthesis of Findings}
+Synthesize the main findings from your review. What are the overarching conclusions?
+
+\subsection{Theoretical Implications}
+Discuss the theoretical contributions and implications of the reviewed work.
+
+\subsection{Practical Implications}
+Discuss the practical applications and real-world implications.
+
+% ========== 8. 结论 ==========
+\section{Conclusion}
+\label{sec:conclusion}
+
+\subsection{Summary}
+Provide a concise summary of the literature review, including:
+\begin{itemize}
+    \item Main themes identified
+    \item Key findings and trends
+    \item Major research gaps
+\end{itemize}
+
+\subsection{Future Directions}
+Suggest directions for future research based on the identified gaps:
+\begin{enumerate}
+    \item High-priority research questions
+    \item Methodological improvements needed
+    \item Emerging areas to explore
+\end{enumerate}
+
+\subsection{Limitations of This Review}
+Acknowledge limitations of your review process itself.
+
+% ========== 参考文献 ==========
+\newpage
+\bibliographystyle{apalike}
+\bibliography{references}
+
+% ========== 附录 ==========
+\newpage
+\appendix
+\section{Search Results Summary}
+\label{app:search}
+
+Include supplementary information such as:
+\begin{itemize}
+    \item PRISMA flow diagram
+    \item Complete list of search terms
+    \item Detailed inclusion/exclusion criteria
+    \item List of excluded papers with reasons
+\end{itemize}
+
+\section{Data Extraction Table}
+\label{app:data}
+
+Include a table summarizing key information from all reviewed papers:
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of Reviewed Papers}
+\label{tab:papers}
+\begin{tabular}{@{}p{2cm}p{3cm}p{3cm}p{4cm}@{}}
+\toprule
+\textbf{Author (Year)} & \textbf{Method} & \textbf{Key Findings} & \textbf{Limitations} \\
+\midrule
+Example (2024) & Method A & Finding 1 & Limitation 1 \\
+Sample (2023) & Method B & Finding 2 & Limitation 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
