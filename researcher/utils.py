@@ -802,7 +802,7 @@ def markdown_to_pdf(markdown_path: Path, pdf_path: Optional[Path] = None, title:
     return pdf_path
 
 
-def latex_to_pdf(latex_path: Path):
+def latex_to_pdf(latex_path: Path, lang: str = "en"):
     with open(latex_path, "r", encoding="utf-8") as f:
         latex_content = f.read()
     
@@ -812,6 +812,6 @@ def latex_to_pdf(latex_path: Path):
         aux_file = latex_path.with_suffix(ext)
         if aux_file.exists():
             aux_file.unlink()
-    sueccess, pdf_path = compile_latex(latex_path, latex_content)
+    sueccess, pdf_path = compile_latex(latex_path, latex_content, lang)
     if sueccess:
         print("Compile succeed!")

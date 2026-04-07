@@ -1,0 +1,280 @@
+\documentclass[11pt,a4paper]{article}
+% \usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{natbib}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\usepackage{fontspec}
+\usepackage{xeCJK}
+
+\setmainfont{Times New Roman}
+
+% ================= 图像使用规范（供生成模型参考） =================
+% 使用如下标准格式插入图片：
+%
+% \begin{figure}[htbp]
+% \centering
+% \includegraphics[width=0.8\linewidth]{path/to/image}
+% \caption{对图像进行描述，并解释其在文献综述中的作用}
+% \label{fig:unique_label}
+% \end{figure}
+%
+% 要求：
+% 1. 图片路径必须使用原始路径（不要修改或重写）
+% 2. 每个图片必须有 \caption 和 \label
+% 3. 在正文中使用如下方式引用：
+%    Figure~\ref{fig:unique_label}
+% 4. 图片应放置在相关内容附近（不要集中在文末）
+% ============================================================
+
+% 页面设置
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+% 页眉页脚
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{文献综述}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% 标题格式
+\titleformat{\section}{\Large\bfseries\color{blue!50!black}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue!30!black}}{\thesubsection}{1em}{}
+
+% 超链接颜色
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=green!50!black,
+    urlcolor=blue!70!black
+}
+
+\begin{filecontents}{references.bib}
+% 示例参考文献，请替换为实际引用
+@article{example2024,
+  title={用于文献综述的示例论文},
+  author={Author, Example},
+  journal={示例期刊},
+  volume={1},
+  number={1},
+  pages={1--10},
+  year={2024},
+  publisher={示例出版社}
+}
+
+@inproceedings{sample2023,
+  title={示例会议论文},
+  author={Sample, Author and Test, Researcher},
+  booktitle={示例会议论文集},
+  pages={100--110},
+  year={2023}
+}
+\end{filecontents}
+
+% ========== 标题信息 ==========
+\title{\textbf{文献综述：[你的研究主题]}}
+\author{你的姓名 \\
+        你的机构 \\
+        \texttt{your.email@example.com}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% ========== 摘要 ==========
+\begin{abstract}
+\noindent
+\textbf{研究目的：} 简要描述本综述的目标与范围。 \\
+\textbf{研究方法：} 描述文献检索策略与筛选标准。 \\
+\textbf{主要发现：} 总结文献中的关键研究结论。 \\
+\textbf{结论：} 给出主要结论及其意义。
+
+\vspace{0.5em}
+\noindent\textbf{关键词：} 关键词1，关键词2，关键词3，关键词4
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ========== 1. 引言 ==========
+\section{引言}
+\label{sec:intro}
+
+\subsection{研究背景}
+介绍研究主题的背景，说明其重要性及在相关领域中的意义。
+
+\subsection{研究问题}
+明确本综述试图回答的问题：
+\begin{enumerate}
+    \item 主要研究问题是什么？
+    \item 聚焦该主题的哪些具体方面？
+    \item 试图识别哪些研究空白？
+\end{enumerate}
+
+\subsection{范围与局限}
+界定综述范围：
+\begin{itemize}
+    \item 时间范围（例如：2010–2024）
+    \item 文献类型（期刊、会议论文等）
+    \item 地理或领域限制
+    \item 排除标准
+\end{itemize}
+
+% ========== 2. 研究方法 ==========
+\section{研究方法}
+\label{sec:method}
+
+\subsection{检索策略}
+描述系统性检索方法：
+\begin{itemize}
+    \item 使用的数据库（如 Google Scholar、IEEE Xplore、PubMed）
+    \item 检索关键词
+    \item 检索时间
+    \item 是否采用滚雪球或引用追踪
+\end{itemize}
+
+\subsection{筛选标准}
+说明纳入与排除标准：
+\begin{itemize}
+    \item \textbf{纳入标准：} 文献需满足的条件
+    \item \textbf{排除标准：} 文献被剔除的条件
+\end{itemize}
+
+\subsection{数据提取}
+说明如何从文献中提取并组织信息。
+
+% ========== 3. 文献分类框架 ==========
+\section{分类框架}
+\label{sec:framework}
+
+介绍组织文献的分类方法：
+
+\subsection{按时间}
+按时间发展阶段进行组织。
+
+\subsection{按方法}
+按研究方法分类（实验、理论、综述等）。
+
+\subsection{按主题}
+按研究主题或问题分类。
+
+% ========== 4. 文献综述 ==========
+\section{文献综述}
+\label{sec:review}
+
+\subsection{主题1：[第一个主题]}
+总结该主题的关键文献：
+\begin{itemize}
+    \item 研究目标
+    \item 方法
+    \item 主要贡献
+    \item 优势与不足
+\end{itemize}
+
+\textbf{关键文献：}
+\begin{itemize}
+    \item \cite{example2024} - 简要说明贡献
+    \item \cite{sample2023} - 简要说明贡献
+\end{itemize}
+
+\subsection{主题2：[第二个主题]}
+（结构同上）
+
+\subsection{主题3：[第三个主题]}
+
+% ========== 5. 比较分析 ==========
+\section{比较分析}
+\label{sec:comparison}
+
+\subsection{跨主题比较}
+\begin{table}[htbp]
+\centering
+\caption{方法比较}
+\label{tab:comparison}
+\begin{tabular}{@{}llll@{}}
+\toprule
+方法 & 优点 & 缺点 & 适用场景 \\
+\midrule
+方法A & 优点1 & 缺点1 & 场景X \\
+方法B & 优点2 & 缺点2 & 场景Y \\
+方法C & 优点3 & 缺点3 & 场景Z \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{趋势分析}
+\begin{itemize}
+    \item 新兴方向
+    \item 方法演化
+    \item 研究热度变化
+\end{itemize}
+
+% ========== 6. 研究空白 ==========
+\section{研究空白}
+\label{sec:gaps}
+
+\begin{enumerate}
+    \item \textbf{空白1：} 描述
+    \item \textbf{空白2：} 描述
+    \item \textbf{空白3：} 描述
+\end{enumerate}
+
+% ========== 7. 讨论 ==========
+\section{讨论}
+\label{sec:discussion}
+
+\subsection{综合分析}
+总结整体结论。
+
+\subsection{理论意义}
+讨论理论贡献。
+
+\subsection{实践意义}
+讨论实际应用价值。
+
+% ========== 8. 结论 ==========
+\section{结论}
+\label{sec:conclusion}
+
+\subsection{总结}
+\begin{itemize}
+    \item 主要主题
+    \item 关键发现
+    \item 研究空白
+\end{itemize}
+
+\subsection{未来方向}
+\begin{enumerate}
+    \item 重要研究问题
+    \item 方法改进
+    \item 新兴方向
+\end{enumerate}
+
+\subsection{局限性}
+说明综述本身的局限。
+
+% ========== 参考文献 ==========
+\newpage
+\bibliographystyle{apalike}
+\bibliography{references}
+
+% ========== 附录 ==========
+\newpage
+\appendix
+\section{检索结果}
+\label{app:search}
+
+\section{数据提取表}
+\label{app:data}
+
+\end{document}

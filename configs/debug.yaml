@@ -48,6 +48,8 @@ researcher:
     # sources: ["arxiv", "pubmed", "semantic_scholar", "openalex", "crossref", "perplexity"]  # All sources
     # sources: ["arxiv", "pubmed", "openalex"]  # Sources without API
     sources: ["arxiv"]   # Common sources
+    latex_template: "default_en" # "default_cn", "custom"
+    latex_language: "en"  # "en" or "cn"
     api:
       semantic_scholar_api_key: ""
       pubmed_api_key: ""

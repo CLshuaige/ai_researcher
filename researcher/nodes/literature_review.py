@@ -78,6 +78,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         format = config.get("output_format", "markdown").lower()
         sources = [s.lower() for s in config.get("sources", ["arxiv"])]
         api_config = config.get("api") or {}
+        template = config.get("latex_template", "default_en")
+        lang = config.get("latex_language", "en").lower()
         test_summary = True
 
         llm_config = get_llm_config()
@@ -301,7 +303,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                             f"{blog_content_for_summary}"
                         )
 
-                summary_prompt = _construct_summay_prompt(task, blog_blocks, format, mode)
+                summary_prompt = _construct_summay_prompt(task, blog_blocks, format, mode, template, workspace_dir)
             else:
                 abstract_blocks: List[str] = []
                 for idx, entry in enumerate(unified_metadata, start=1):
@@ -315,7 +317,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         f"Abstract: {entry.get('abstract', '')}\n"
                     )
 
-                summary_prompt = _construct_summay_prompt(task, abstract_blocks, format, mode)
+                summary_prompt = _construct_summay_prompt(task, abstract_blocks, format, mode, template, workspace_dir)
 
             context_variables["unified_metadata"] = unified_metadata
             return summary_prompt, context_variables
@@ -451,7 +453,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             lit_path = lit_path.with_suffix(".tex")
             latex_content = literature.to_latex()
             save_markdown(latex_content, lit_path)
-            latex_to_pdf(lit_path)
+            latex_to_pdf(lit_path, lang)
         elif format == "markdown":
             save_markdown(literature.to_markdown(), lit_path)
             markdown_to_pdf(lit_path)
@@ -617,12 +619,22 @@ def _rewrite_markdown_image_paths(markdown_text: str, source_dir: Path, target_d
 
     return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace, markdown_text)
 
-def _construct_summay_prompt(task: str, blog_blocks: List[str], format: str, mode: str) -> str:
+def _construct_summay_prompt(task: str, blog_blocks: List[str], format: str, mode: str, template: str, workspace_dir: Path) -> str:
     if mode == "detailed":
         if format == "latex":
-            template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
-            template_path = Path(template_path)
-            template_content = load_markdown(template_path)
+            # copy template to workspace
+            if template == "default_en" or template == "default_cn":
+                template_path = f"./researcher/latex/literature/{template}.tex"
+                # copy
+                target_template_path = workspace_dir / "literature" / "template.tex"
+                shutil.copy(template_path, target_template_path)
+            elif template == "custom":
+                # assume user has uploaded a template.tex to the workspace
+                target_template_path = workspace_dir / "literature" / "template.tex"
+                if not target_template_path.exists():
+                    raise WorkflowError(f"Custom template not found at {target_template_path}")
+            
+            template_content = load_markdown(target_template_path)
             from string import Template
             prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
             summary_prompt = prompt_template.substitute(
@@ -637,9 +649,19 @@ def _construct_summay_prompt(task: str, blog_blocks: List[str], format: str, mod
             )
     if mode == "basic":
         if format == "latex":
-            template_path = "/home/ai_researcher/projects/ai_researcher/researcher/latex/literature/template.tex"
-            template_path = Path(template_path)
-            template_content = load_markdown(template_path)
+            # copy template to workspace
+            if template == "default_en" or template == "default_cn":
+                template_path = f"./researcher/latex/literature/{template}.tex"
+                # copy
+                target_template_path = workspace_dir / "literature" / "template.tex"
+                shutil.copy(template_path, target_template_path)
+            elif template == "custom":
+                # assume user has uploaded a template.tex to the workspace
+                target_template_path = workspace_dir / "literature" / "template.tex"
+                if not target_template_path.exists():
+                    raise WorkflowError(f"Custom template not found at {target_template_path}")
+            
+            template_content = load_markdown(target_template_path)
             from string import Template
             prompt_template = Template(LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX)
             summary_prompt = prompt_template.substitute(

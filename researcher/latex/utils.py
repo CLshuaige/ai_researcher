@@ -45,13 +45,14 @@ def extract_latex_code(response: str) -> Optional[str]:
 
     return None
 
-def compile_latex(tex_path: Path, tex_content: str) -> Tuple[bool, str]:
+def compile_latex(tex_path: Path, tex_content: str, lang: str = "en") -> Tuple[bool, str]:
     """
     编译LaTeX文件
 
     Args:
         tex_path: tex文件路径（包含目录和文件名）
         tex_content: LaTeX内容
+        lang: 语言设置
 
     Returns:
         (是否成功, PDF路径或错误信息)
@@ -78,13 +79,22 @@ def compile_latex(tex_path: Path, tex_content: str) -> Tuple[bool, str]:
     has_citations = "\\cite{" in tex_content or "\\bibliography{" in tex_content
 
     # 编译命令序列
-    commands = [["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"]]
-    if has_citations:
-        commands.append(["bibtex", sample_name])
-    commands.extend([
-        ["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
-        ["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
-    ])
+    if lang == "cn":
+        commands = [["xelatex", "-interaction=nonstopmode", f"{sample_name}.tex"]]
+        if has_citations:
+            commands.append(["bibtex", sample_name])
+        commands.extend([
+            ["xelatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
+            ["xelatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
+        ])
+    else:
+        commands = [["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"]]
+        if has_citations:
+            commands.append(["bibtex", sample_name])
+        commands.extend([
+            ["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
+            ["pdflatex", "-interaction=nonstopmode", f"{sample_name}.tex"],
+        ])
 
     for cmd in commands:
         try:
@@ -135,7 +145,7 @@ if __name__ == "__main__":
     tex_path = Path(tex_path)
 
     # 调用 compile_latex
-    success, result = compile_latex(tex_path, tex_content)
+    success, result = compile_latex(tex_path, tex_content, lang="cn")
 
     if success:
         print(f"\n✅ 编译成功!")
