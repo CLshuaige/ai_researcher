@@ -1,8 +1,10 @@
 from typing import Dict, Any
+from pathlib import Path
+from string import Template
 
 from autogen.agentchat import initiate_group_chat
 from autogen.agentchat.group.patterns import DefaultPattern
-from autogen.agentchat.group import RevertToUserTarget, ContextVariables
+from autogen.agentchat.group import RevertToUserTarget, ContextVariables, TerminateTarget
 
 from researcher.state import ResearchState
 from researcher.schemas import ReviewReport
@@ -26,20 +28,28 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
     log_stage(workspace_dir, "review", "Starting review")
 
     try:
-        paper = load_artifact_from_file(workspace_dir, "paper")
-        if not paper:
-            # Try .md extension
-            paper_md_path = get_artifact_path(workspace_dir, "paper").with_suffix('.md')
-            if paper_md_path.exists():
-                with open(paper_md_path, 'r', encoding='utf-8') as f:
-                    paper = f.read()
+        config = state["config"]["researcher"]["review"]
+        input_type = config.get("input_type", "literature") # paper or literature
+        enable_skill = config.get("enable_skill", False)
+        content = load_artifact_from_file(workspace_dir, input_type)
+        if not content:
+            base_path = get_artifact_path(workspace_dir, input_type)
 
-        if not paper:
-            raise WorkflowError("Paper file not found")
+            for suffix in ('.md', '.tex'):
+                path = base_path.with_suffix(suffix)
+                if path.exists():
+                    content = path.read_text(encoding='utf-8')
+                    break
+
+        if not content:
+            raise WorkflowError("File for review not found")
 
         llm_config = get_llm_config()
 
-        reviewer = ReviewerAgent().create_agent(llm_config)
+        reviewer = ReviewerAgent().create_agent(
+            llm_config,
+            enable_skill=enable_skill
+        )
 
         pattern = DefaultPattern(
             initial_agent=reviewer,
@@ -48,14 +58,17 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
             group_manager_args={"llm_config": llm_config}
         )
 
-        reviewer.handoffs.set_after_work(RevertToUserTarget())
-
-        prompt = REVIEW_PROMPT.format(paper=paper)
+        reviewer.handoffs.set_after_work(TerminateTarget())
+        if enable_skill:
+            prompt = content
+        else:
+            review_prompt = Template(REVIEW_PROMPT)
+            prompt = review_prompt.substitute(content=content)
 
         if state["config"]["researcher"]["iterable"]:
             result, context, last_agent = iterable_group_chat(
                 state,
-                max_rounds=2,
+                max_rounds=20,
                 enable_hitl=False,
                 pattern=pattern,
                 prompt=prompt,
@@ -64,7 +77,7 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
             result, context, last_agent = initiate_group_chat(
                 pattern=pattern,
                 messages=prompt,
-                max_rounds=2
+                max_rounds=20
             )
 
         # Extract review from reviewer

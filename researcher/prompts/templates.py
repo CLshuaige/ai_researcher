@@ -1570,7 +1570,7 @@ Provide guidance to complete this wet experiment. When complete, provide a detai
 
 REVIEW_PROMPT = """Review the following research paper:
 
-Paper: {paper}
+Paper: $content
 
 Provide a structured review with:
 

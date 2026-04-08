@@ -25,6 +25,8 @@ from researcher.prompts.templates import (
 
 
 from researcher.agents.context_manager import AgentContextManager
+from researcher.skill.utils import enable_skill_prompt
+from researcher.skill.tools import load_skill, execute_skill_script, load_reference
 
 
 class BaseAgent:
@@ -38,7 +40,8 @@ class BaseAgent:
         self,
         llm_config: Dict[str, Any],
         enable_context_compression: Optional[bool] = False,
-        functions: Optional[List[Callable]] = None,
+        enable_skill: Optional[bool] = False,
+        functions: Optional[List[Callable]] = [],
     ) -> ConversableAgent:
         """Create a ConversableAgent with automatic context compression.
 
@@ -54,9 +57,16 @@ class BaseAgent:
         Returns:
             ConversableAgent with context compression capabilities applied.
         """
+        if enable_skill:
+            functions.extend([load_skill, load_reference])
+            skill_prompt = enable_skill_prompt()
+            system_prompt = skill_prompt + "\n\n" + self.system_prompt
+        else:
+            system_prompt = self.system_prompt
+            
         agent = ConversableAgent(
             name=self.name,
-            system_message=self.system_prompt,
+            system_message=system_prompt,
             llm_config=llm_config,
             functions=functions,
         )

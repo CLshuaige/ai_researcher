@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from utils import find_skill_by_name, get_skill_permission, ask_user_approval
+from .utils import find_skill_by_name, get_skill_permission, ask_user_approval, list_available_scripts
 
 
 async def load_skill(name: str) -> str | dict:
@@ -64,6 +64,14 @@ def execute_skill_script(skill_name: str, script_path: str, args: list):
     # Security check: ensure resolved path is still under skill_root (prevents symlink escape)
     if not str(full_path).startswith(str(skill_root)):
         raise ValueError("Invalid script path: escape attempt detected")
+    
+    # Check if script exists
+    if not full_path.exists():
+        available_scripts = list_available_scripts(skill_name)
+        if available_scripts is not None:
+            return "Error: " + f"Script not found: {full_path}.\n" + f"The available_scripts: {', '.join(available_scripts)}"
+        return "Error: " + f"Script not found: {full_path}. No scripts available for this skill, check the skill's description."
+
 
     # Execute synchronously, similar to Node's spawnSync
     result = subprocess.run(

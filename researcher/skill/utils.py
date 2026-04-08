@@ -138,14 +138,9 @@ def find_skill_by_name(name: str) -> dict:
             return skill
     return None
 
-@lru_cache(maxsize=1)
-def _load_permissions():
-    import json
-    return json.load(open(Path(__file__).parent / "configs.json"))["permission"]["skill"]
-
-
 def get_skill_permission(name: str) -> str:
-    permissions = _load_permissions()
+    import json
+    permissions = json.load(open(Path(__file__).parent / "configs.json"))["permission"]["skill"]
 
     # 检查是否有具体的权限设置
     if name in permissions:
@@ -165,3 +160,37 @@ def ask_user_approval(name: str) -> bool:
     # TODO
     return True
 
+def list_available_scripts(skill_name: str) -> list:
+    skill = find_skill_by_name(skill_name)
+    if not skill:
+        raise ValueError(f"Skill not found: {skill_name}")
+
+    scripts_dir = Path(skill["path"]) / "scripts"
+    if not scripts_dir.exists() or not scripts_dir.is_dir():
+        return None
+
+    return [str(p.relative_to(scripts_dir)) for p in scripts_dir.rglob("*") if p.is_file()]
+
+# skill prompt
+def enable_skill_prompt() -> str:
+    # list skills
+    skills = discover_project_skills(Path.cwd())
+    print(skills)
+    # parse metadata
+    for skill in skills:
+        metadata = parse_metadata(skill["skillMdPath"])
+        skill["name"] = metadata["name"]
+        skill["description"] = metadata["description"]
+    print(skills)
+    # filter by permission
+    allowed_skills = []
+    for skill in skills:
+        permission = get_skill_permission(skill["name"])
+        if permission == "allow":
+            allowed_skills.append(skill)
+        elif permission == "ask":
+            if ask_user_approval(skill["name"]):
+                allowed_skills.append(skill)
+    print(allowed_skills)
+    # generate prompt
+    return generate_skills_prompt(allowed_skills)
