@@ -744,6 +744,54 @@ Constraints:
 - Do not guess paths.
 - Do not continue if the tool fails.
 """
+
+SOURCE_BLOG_PROMPT = """Write a blog for ONE source item.
+
+Write a high-quality markdown blog that is evidence-based, easy to summarize later, and suitable for mixed source types such as markdown notes, reports, PDFs, slide decks, spreadsheets, structured data files, local folders, downloaded web materials, and code repositories.
+
+Source Metadata (JSON):
+{source_metadata}
+
+Prepared Source Markdown:
+{source_markdown}
+
+Available Images:
+{available_images}
+
+Output requirements:
+1. Output Markdown only.
+2. Use a general structure that fits mixed source items. Include sections: Overview, Main Contents, Key Signals, Relevance to Downstream Research, Limits.
+3. Do not force paper-style sections such as method, experiment, or conclusion unless the source clearly supports them.
+4. If the source is a repository or folder, summarize structure, important files, entry points, configuration, data assets, and how the parts connect.
+5. If the source is structured data, explain the schema-like signals, representative rows or objects, and notable fields.
+6. Select images only from the markdown images already embedded in the prepared source markdown above.
+7. Keep only the images that are clearly important for understanding the source. Preserve the original markdown image path when you keep one.
+8. If no image is provided or no image is important, do not add one.
+9. If the prepared source markdown is truncated, clearly say which conclusions are limited by truncation.
+10. Do not wrap the markdown in code fences such as ```markdown or ```.
+11. Strictly follow the provided source content. Do not invent claims, structure, datasets, field meanings, or conclusions.
+12. If some detail is unclear or missing, say that it is unclear or not provided.
+13. Use standard Markdown syntax throughout.
+"""
+
+SOURCE_KNOWLEDGE_SYNTHESIS_PROMPT = """Generate a consolidated `knowledge.md` from the following per-source blogs.
+
+Original Project Input:
+{task}
+
+Source Blogs:
+{blogs_text}
+
+Requirements:
+1. Output Markdown only.
+2. Synthesize across all source blogs.
+3. Organize the result with sections: Overview, Main Assets, Reusable Signals, Risks and Limits, Suggested Use in Later Research Steps.
+4. Focus on actionable understanding for downstream nodes such as task parsing, literature review, method design, and experiment planning.
+5. When multiple sources overlap, merge them into one coherent explanation instead of repeating details.
+6. If evidence is weak or partial, explicitly say so.
+7. Do not invent any files, modules, datasets, claims, or conclusions not supported by the blogs.
+8. Keep the tone analytical and concise. The sentences in the text need to be accompanied by the source of evidence.
+"""
 LITERATURE_MANAGER_INITIAL_PROMPT = """
 Analyze the research task, identify the relevant literature, and generate a literature review plan.
 
@@ -807,6 +855,8 @@ Write in academic style, 300-500 words.
 
 LITERATURE_BLOG_PROMPT = """Write a blog for ONE paper.
 
+Write a high-quality markdown blog with academic readability. Focus on motivation, method, evidence, limitations, and relevance. Only keep the most important figures.
+
 Task:
 {task}
 
@@ -835,37 +885,8 @@ Output requirements:
 13. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
 """
 
-# LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
 
-# Task:
-# {task}
-
-# All Paper Blogs:
-# {blogs_text}
-
-# Requirements:
-# 1. Using Markdown.
-# 2. Academic style and complete literature-review structure.
-# 3. Use author-year citations in the main text.
-# 4. Build synthesis from blog evidence, not only abstract-level summaries.
-# 5. Cover as many of the mentioned papers as possible. The literature review should preserve the important information from the full set of papers rather than discussing only a small subset.
-# 6. Organize the review by logical relationships such as problem setting, methodological family, evidence pattern, limitation, or research gap. Use clear sectioning and paragraph structure so the reasoning is easy to follow.
-# 7. Prefer a thorough and information-rich review when supported by the source papers. More useful detail is better, as long as it remains evidence-based and well organized.
-# 8. From the images already retained in the blogs, keep only the images that are most important for the full literature review. 
-# 9. If the blogs contain any meaningful retained images, the literature review should preserve at least one of them.
-# 10. When you preserve an image, insert the exact markdown image syntax directly into the review and explain why that figure matters at the literature-review level.
-# 11. Include at least one Mermaid diagram that summarizes either literature relationships, methodological relationships, or both.
-# 12. The Mermaid output must be a valid fenced code block that starts with ```mermaid and can be rendered directly.
-# 13. Include at least one comparative table across papers.
-# 14. The output should be a rich literature review with integrated text, figures, Mermaid diagrams, and tables rather than prose alone.
-# 15. End with a References section using metadata entries.
-# 16. Strictly follow the evidence in the provided blogs. Do not invent methods, data, quantitative results, comparisons, causal claims, or research gaps that are not supported by the source papers.
-# 17. When evidence is limited, mixed, or missing, explicitly say so instead of filling gaps with plausible-sounding content.
-# 18. Use standard Markdown syntax throughout.
-# 19. For inline math, use `$...$`. For block math, use `$$...$$`.
-# 20. Do not use LaTeX document environments such as `\\begin{{equation}}`, `\\begin{{align}}`, or similar.
-# """
-LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX = """Generate a full literature review using the following per-paper blogs.
+LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT_LATEX = """Generate a full literature review using the following research material blogs.
 # LITERATURE SYNTHESIS → LATEX (TEMPLATE-AWARE, COMPACT)
 
 ## Task
@@ -949,7 +970,7 @@ $template
 20. Do not fabricate references.
 """
 
-LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following per-paper blogs.
+LITERATURE_SYNTHESIS_FROM_BLOGS_PROMPT = """Generate a full literature review using the following research material blogs.
 
 Task:
 {task}

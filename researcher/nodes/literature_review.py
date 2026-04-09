@@ -1,9 +1,7 @@
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Annotated
+from typing import Dict, Any, List, Annotated, Optional
 import json
-import os
 import re
 import shutil
 
@@ -23,6 +21,10 @@ from researcher.state import ResearchState
 from researcher.schemas import LiteratureReview, LiteratureItem
 from researcher.agents import LiteratureSearcherAgent, LiteratureSummarizerAgent, LiteratureManagerAgent
 from researcher.utils import (
+    assemble_markdown_blog_blocks,
+    resolve_workspace_path,
+    extract_pdf_markdown_with_images,
+    run_jobs_in_parallel,
     save_markdown,
     save_json,
     load_json,
@@ -35,7 +37,6 @@ from researcher.utils import (
     save_agent_history,
     save_session_metadata,
     iterable_group_chat,
-    parse_json_from_response,
     markdown_to_pdf,
     latex_to_pdf,
     get_relative_path,
@@ -80,6 +81,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         api_config = config.get("api") or {}
         template = config.get("latex_template", "default_en")
         lang = config.get("latex_language", "en").lower()
+        include_source_ingestion_blogs = config.get("include_source_ingestion_blogs", True)
         test_summary = True
 
         llm_config = get_llm_config()
@@ -125,7 +127,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         summarizer = LiteratureSummarizerAgent().create_agent(llm_config, enable_context_compression=False)
 
         def build_paper_blog(entry: Dict[str, Any]) -> str:
-            parsed_md_path = _resolve_workspace_path(entry["parsed_md_path"], workspace_dir)
+            parsed_md_path = resolve_workspace_path(entry["parsed_md_path"], workspace_dir)
             paper_markdown = load_markdown(parsed_md_path) or ""
             images_text = (
                 "The parsed paper markdown above already contains the extracted figures at their insertion points. "
@@ -155,26 +157,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                 paper_markdown=paper_markdown,
                 available_images=images_text,
             )
-
-            blogger = ConversableAgent(
-                name="Blogger",
-                human_input_mode="NEVER",
-                system_message=(
-                    "Read one paper and write a high-quality markdown blog. "
-                    "Keep academic readability and focus on motivation, method, evidence, limitations, relevance. "
-                    "Only keep the most important figures."
-                ),
-                llm_config=llm_config,
-            )
-            reply = blogger.generate_reply(
-                messages=[{"role": "user", "content": blog_prompt}],
-                sender=None,
-            )
-
-            content = str(reply["content"]).strip()
-            content = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n", "", content)
-            content = re.sub(r"\n?```$", "", content).strip()
-            return content
+            return blog_prompt
 
         def prepare_summary_input(output: Any, context_variables: ContextVariables):
             metadata_path = workspace_dir / "literature" / "metadata.json"
@@ -231,77 +214,72 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
 
             indexed_blogs: Dict[int, str] = {}
             unified_metadata = load_json(metadata_path)["papers"]
+            source_blog_entries = _load_source_blog_entries(workspace_dir) if include_source_ingestion_blogs else []
             max_workers = len(unified_metadata)
             # for blogs
             if mode == "detailed":
                 blog_blocks: List[str] = []
                 if not test_summary:
                     set_sub_stage("blog_generating")
-                    # build blogs in parallel
-                    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                        futures = {
-                            pool.submit(build_paper_blog, entry): idx
-                            for idx, entry in enumerate(unified_metadata)
+                    blog_jobs = [
+                        {
+                            "key": idx,
+                            "prompt": build_paper_blog(entry),
+                            "agent_name": "LiteratureBlogger",
                         }
-                        # wait for all blogs to be built
-                        from tqdm import tqdm
-                        for future in tqdm(as_completed(futures), total=len(futures), desc="Building blogs"):
-                            idx = futures[future]
-                            try:
-                                indexed_blogs[idx] = future.result()
-                            except Exception:
-                                set_sub_stage("blog_failed")
-                                raise
+                        for idx, entry in enumerate(unified_metadata)
+                    ]
+                    try:
+                        # build blogs in parallel
+                        indexed_blogs = run_jobs_in_parallel(
+                            jobs=blog_jobs,
+                            worker=lambda job: _generate_markdown_with_agent(
+                                prompt=job["prompt"],
+                                llm_config=llm_config,
+                                agent_name=job.get("agent_name", "LiteratureBlogger"),
+                            ),
+                            max_workers=max_workers or None,
+                            progress_desc="Building blogs",
+                        )
+                    except Exception:
+                        set_sub_stage("blog_failed")
+                        raise
                     set_sub_stage("blog_completed")
-
-                    # assemble blog blocks
-                    for idx, entry in enumerate(unified_metadata, start=1):
-                        blog_content = indexed_blogs[idx - 1]
-                        blog_path = _resolve_workspace_path(entry["blog_path"], workspace_dir)
-                        blog_header = (
-                            "# Paper Metadata\n\n"
-                            f"- Title: {entry.get('title', '')}\n"
-                            f"- Authors: {', '.join(entry.get('authors', []))}\n"
-                            f"- Year: {entry.get('year')}\n"
-                            f"- Source: {entry.get('source', '')}\n"
-                            f"- URL: {entry.get('url', '')}\n"
-                            f"- Parse Status: {entry.get('parse_status', 'unknown')}\n\n"
-                            "---\n\n"
-                        )
-                        save_markdown(blog_header + blog_content, blog_path)
-                        markdown_to_pdf(blog_path)
-
-                        citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
-                        blog_content_for_summary = _rewrite_markdown_image_paths(
-                            blog_content,
-                            source_dir=blog_path.parent,
-                            target_dir=workspace_dir,
-                        )
-                        blog_blocks.append(
-                            f"## Paper {idx}\n"
-                            f"- Citation Hint: {citation_hint}\n"
-                            "\n"
-                            f"{blog_header}{blog_content_for_summary}"
-                        )
-
                 else:
-                    # load blogs from file
-                    for idx, entry in enumerate(unified_metadata, start=1):
-                        blog_path = _resolve_workspace_path(entry["blog_path"], workspace_dir)
-                        full_blog_content = load_markdown(blog_path) or ""
+                    indexed_blogs = None
 
-                        citation_hint = f"{', '.join(entry.get('authors', [])[:2])} ({entry.get('year')})"
-                        blog_content_for_summary = _rewrite_markdown_image_paths(
-                            full_blog_content,
-                            source_dir=blog_path.parent,
-                            target_dir=workspace_dir,
+                blog_blocks.extend(
+                    assemble_markdown_blog_blocks(
+                        entries=unified_metadata,
+                        workspace_dir=workspace_dir,
+                        indexed_blogs=indexed_blogs,
+                        metadata_title="Paper Metadata",
+                        metadata_fields=[
+                            ("Title", "title"),
+                            ("Authors", "authors"),
+                            ("Year", "year"),
+                            ("Source", "source"),
+                            ("URL", "url"),
+                            ("Parse Status", lambda entry: entry.get("parse_status", "unknown")),
+                        ],
+                        block_label="Paper",
+                        hint_label="Citation Hint",
+                        hint_builder=_build_paper_citation_hint,
+                        write_blog=indexed_blogs is not None,
+                    )
+                )
+                if source_blog_entries:
+                    blog_blocks.extend(
+                        assemble_markdown_blog_blocks(
+                            entries=source_blog_entries,
+                            workspace_dir=workspace_dir,
+                            metadata_title="Source Metadata",
+                            metadata_fields=_source_metadata_field_specs(),
+                            block_label="Source",
+                            hint_label="Source Hint",
+                            hint_builder=_build_source_hint,
                         )
-                        blog_blocks.append(
-                            f"## Paper {idx}\n"
-                            f"- Citation Hint: {citation_hint}\n"
-                            "\n"
-                            f"{blog_content_for_summary}"
-                        )
+                    )
 
                 summary_prompt = _construct_summay_prompt(task, blog_blocks, format, mode, template, workspace_dir)
             else:
@@ -476,6 +454,23 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         raise WorkflowError(f"Literature review failed: {str(e)}")
 
 
+def _generate_markdown_with_agent(prompt: str, llm_config: Dict[str, Any], agent_name: str) -> str:
+    agent = ConversableAgent(
+        name=agent_name,
+        human_input_mode="NEVER",
+        system_message="",
+        llm_config=llm_config,
+    )
+    reply = agent.generate_reply(messages=[{"role": "user", "content": prompt}], sender=None)
+    if isinstance(reply, dict):
+        content = str(reply.get("content", "")).strip()
+    else:
+        content = str(reply).strip()
+    content = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n", "", content)
+    content = re.sub(r"\n?```$", "", content).strip()
+    return content
+
+
 def _build_paper_uid(source: str, sequence: int, paper: Dict[str, Any]) -> str:
     raw = paper.get("arxiv_id") or paper.get("external_id") or paper.get("doi") or paper.get("url") or "paper"
     source_token = re.sub(r"[^a-zA-Z0-9._-]+", "_", source).strip("._")[:20] or "source"
@@ -488,7 +483,7 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
     pdf_path: Path | None = None
 
     if entry.get("pdf_path"):
-        candidate = _resolve_workspace_path(entry["pdf_path"], workspace_dir)
+        candidate = resolve_workspace_path(entry["pdf_path"], workspace_dir)
         if candidate.exists():
             pdf_path = candidate
 
@@ -537,45 +532,23 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
     images_dir = bundle_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     parsed_md_path = bundle_dir / "paper.md"
-
-    import fitz  # type: ignore
-
-    try:
-        doc = fitz.open(str(bundle_pdf_path))
-        sections: List[str] = []
-        image_count = 0
-
-        for page_idx, page in enumerate(doc, start=1):
-            text = (page.get_text("text") or "").strip()
-            chunk_lines = [f"## Page {page_idx}", "", text if text else "_No text extracted on this page._"]
-
-            for image_idx, image_info in enumerate(page.get_images(full=True), start=1):
-                xref = image_info[0]
-                pixmap = fitz.Pixmap(doc, xref)
-                if pixmap.n >= 5:
-                    pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
-                image_name = f"page_{page_idx:03d}_img_{image_idx:02d}.png"
-                image_path = images_dir / image_name
-                pixmap.save(str(image_path))
-                pixmap = None
-                image_count += 1
-                image_rel_path = get_relative_path(image_path, parsed_md_path.parent)
-                chunk_lines.append(f"![Figure p{page_idx}-{image_idx}]({image_rel_path})")
-
-            sections.append("\n".join(chunk_lines).strip())
-
-        markdown_text = "\n\n".join(sections).strip()
+    pdf_parse = extract_pdf_markdown_with_images(
+        bundle_pdf_path,
+        images_dir=images_dir,
+        markdown_dir=parsed_md_path.parent,
+    )
+    if pdf_parse["parse_status"] == "fulltext":
         save_markdown(
             "# Parsed Paper\n\n"
             f"- Source PDF: {bundle_pdf_path}\n"
-            "- Parser Used: fitz\n"
-            f"- Extracted Images: {image_count}\n\n"
-            f"{markdown_text}\n",
+            f"- Parser Used: {pdf_parse['parser_used']}\n"
+            f"- Extracted Images: {pdf_parse['image_count']}\n\n"
+            f"{pdf_parse['markdown_body']}\n",
             parsed_md_path,
         )
-        parse_status = "fulltext"
-        parser_used = "fitz"
-    except Exception:
+        parse_status = pdf_parse["parse_status"]
+        parser_used = pdf_parse["parser_used"]
+    else:
         save_markdown(
             "# Parsed Paper\n\n"
             "_PDF parsing failed. Falling back to metadata-only content._\n\n"
@@ -587,8 +560,8 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
             f"{entry.get('abstract', '')}\n",
             parsed_md_path,
         )
-        parse_status = "metadata_only"
-        parser_used = "fitz_failed"
+        parse_status = pdf_parse["parse_status"]
+        parser_used = pdf_parse["parser_used"]
 
     return {
         "parse_status": parse_status,
@@ -602,22 +575,41 @@ def _prepare_paper_bundle(entry: Dict[str, Any], workspace_dir: Path) -> Dict[st
     }
 
 
-def _resolve_workspace_path(path_value: Any, workspace_dir: Path) -> Path:
-    path = Path(str(path_value))
-    return path if path.is_absolute() else workspace_dir / path
+def _build_paper_citation_hint(entry: Dict[str, Any]) -> Optional[str]:
+    authors = entry.get("authors", [])[:2]
+    year = entry.get("year")
+    if not authors and not year:
+        return None
+    return f"{', '.join(authors)} ({year})"
 
 
-def _rewrite_markdown_image_paths(markdown_text: str, source_dir: Path, target_dir: Path) -> str:
-    def replace(match: re.Match[str]) -> str:
-        alt = match.group(1)
-        raw_path = match.group(2).strip()
-        if re.match(r"^(?:https?:|data:|file:|#)", raw_path):
-            return match.group(0)
-        resolved = (source_dir / raw_path).resolve()
-        relative_path = Path(os.path.relpath(resolved, start=target_dir.resolve())).as_posix()
-        return f"![{alt}]({relative_path})"
+def _source_metadata_field_specs() -> List[tuple[str, Any]]:
+    return [
+        ("Source Input", "source_input"),
+        ("Source Type", "source_type"),
+        ("Local Path", "local_path"),
+        ("Prepared Markdown", "prepared_md_path"),
+        ("Parse Status", lambda entry: entry.get("parse_status", "unknown")),
+        ("Blog Status", lambda entry: entry.get("blog_status", "unknown")),
+    ]
 
-    return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace, markdown_text)
+
+def _build_source_hint(entry: Dict[str, Any]) -> Optional[str]:
+    source_type = entry.get("source_type")
+    source_input = entry.get("source_input")
+    if not source_input:
+        return None
+    return f"{source_type or 'source'}: {source_input}"
+
+
+def _load_source_blog_entries(workspace_dir: Path) -> List[Dict[str, Any]]:
+    metadata_path = workspace_dir / "knowledge" / "metadata.json"
+    metadata = load_json(metadata_path) or {}
+    items = metadata.get("items") or []
+    return [
+        item for item in items
+        if item.get("blog_path") and item.get("blog_status") == "completed"
+    ]
 
 def _construct_summay_prompt(task: str, blog_blocks: List[str], format: str, mode: str, template: str, workspace_dir: Path) -> str:
     if mode == "detailed":

@@ -178,6 +178,7 @@ class APIProjectService:
     def _artifact_candidates_for_node(self, node_name: str) -> List[str]:
         mapping = {
             "source_ingestion": [
+                "knowledge/knowledge.md",
                 "knowledge/knowledge_summary.md",
                 "knowledge/metadata.json",
             ],

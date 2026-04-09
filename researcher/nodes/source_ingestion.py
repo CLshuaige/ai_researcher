@@ -1,3 +1,14 @@
+"""
+Input:
+- `workspace/input/sources_url.json`
+- local files or directories under `workspace/input/`
+
+Output:
+- per-source bundles under `workspace/knowledge/sources/<item_id>/`
+- `workspace/knowledge/metadata.json`
+- `workspace/knowledge/knowledge.md`
+"""
+
 from __future__ import annotations
 
 import csv
@@ -8,27 +19,29 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests
 from autogen import ConversableAgent
-from autogen.agentchat import initiate_group_chat
-from autogen.agentchat.group import ContextVariables, ReplyResult, TerminateTarget
-from autogen.agentchat.group.patterns import DefaultPattern
 
 from researcher.exceptions import WorkflowError
 from researcher.prompts.templates import (
-    SOURCE_DOWNLOADER_ITEM_PROMPT,
-    SOURCE_DOWNLOADER_SYSTEM_PROMPT,
-    SOURCE_INGESTION_ITEM_PROMPT,
-    SOURCE_SUMMARIZER_SYSTEM_PROMPT,
+    SOURCE_BLOG_PROMPT,
+    SOURCE_KNOWLEDGE_SYNTHESIS_PROMPT,
 )
 from researcher.state import ResearchState
 from researcher.utils import (
+    assemble_markdown_blog_blocks,
+    extract_pdf_markdown_with_images,
     get_llm_config,
+    get_relative_path,
+    load_artifact_from_file,
+    load_markdown,
+    resolve_workspace_path,
+    rewrite_markdown_paths,
+    run_jobs_in_parallel,
     log_stage,
-    save_agent_history,
     save_json,
     save_markdown,
 )
@@ -47,15 +60,16 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         max_total_bytes_per_item = config["max_total_bytes_per_item"]
         max_preview_rows = config["max_preview_rows"]
         timeout_seconds = config["timeout_seconds"]
-        max_rounds_download = config["max_rounds_download"]
-        max_rounds_summary = config["max_rounds_summary"]
 
+        # Source ingestion accepts URLs from `input/sources_url.json` plus any
+        # user-provided local files or directories placed under `input/`.
         input_dir = workspace_dir / "input"
         if not input_dir.exists() or not input_dir.is_dir():
             raise WorkflowError(f"Input directory not found: {input_dir}")
 
         sources: List[str] = []
 
+        # Parse explicit URL list from sources_url.json
         sources_url_path = input_dir / "sources_url.json"
         if sources_url_path.exists() and sources_url_path.is_file():
             payload = json.loads(sources_url_path.read_text(encoding="utf-8"))
@@ -67,6 +81,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                 if isinstance(item, str) and item.strip():
                     sources.append(item.strip())
 
+        # Parse sources from workspace_dir / "input"
         for entry in sorted(input_dir.iterdir()):
             if entry.name.startswith(".") or entry.name == "sources_url.json":
                 continue
@@ -83,337 +98,123 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                 f"Source list truncated to max_items={max_items}",
             )
 
-        sources_root = workspace_dir / "inputs" / "sources"
         knowledge_dir = workspace_dir / "knowledge"
-        sources_root.mkdir(parents=True, exist_ok=True)
+        bundles_root = knowledge_dir / "sources"
         knowledge_dir.mkdir(parents=True, exist_ok=True)
+        bundles_root.mkdir(parents=True, exist_ok=True)
 
         llm_config = get_llm_config()
+        task_context = load_artifact_from_file(workspace_dir, "input") or ""
 
+        # resolve and prepare each source
         metadata_items: List[Dict[str, Any]] = []
-        summary_blocks: List[str] = []
-        history_messages: List[Dict[str, Any]] = []
-
         for idx, source in enumerate(sources, start=1):
             item_id = _safe_item_id(idx, source)
+            bundle_dir = bundles_root / item_id
             item_meta: Dict[str, Any] = {
                 "item_id": item_id,
                 "source_input": source,
                 "status": "failed",
                 "source_type": None,
+                "resolved_from": None,
                 "local_path": None,
+                "bundle_dir": get_relative_path(bundle_dir, workspace_dir),
+                "prepared_md_path": None,
+                "blog_path": get_relative_path(bundle_dir / "blog.md", workspace_dir),
+                "parse_status": "pending",
+                "blog_status": "pending",
+                "blog_error": None,
                 "errors": [],
             }
 
             try:
-                download_state: Dict[str, Any] = {}
-                read_budget = {"used": 0}
-
-                def tool_clone_git_repo(
-                    git_url: Annotated[str, "Git repository URL"],
-                ) -> ReplyResult:
-                    repo_path = sources_root / item_id / "repo"
-                    local_path = _clone_git_repo(git_url, repo_path, timeout_seconds=timeout_seconds)
-                    download_state["source_type"] = "git_url"
-                    download_state["resolved_from"] = git_url
-                    download_state["local_path"] = str(local_path)
-                    return ReplyResult(message="Git repository cloned")
-
-                def tool_download_url(
-                    url: Annotated[str, "HTTP/HTTPS URL to download"],
-                ) -> ReplyResult:
-                    download_dir = sources_root / item_id / "downloads"
-                    local_path = _download_url(
-                        url,
-                        destination_dir=download_dir,
-                        timeout_seconds=timeout_seconds,
-                        max_total_bytes=max_total_bytes_per_item,
-                    )
-                    download_state["source_type"] = "url"
-                    download_state["resolved_from"] = url
-                    download_state["local_path"] = str(local_path)
-                    return ReplyResult(message="URL downloaded")
-
-                def tool_resolve_local_path(
-                    source_path: Annotated[str, "Local file or directory path"],
-                ) -> ReplyResult:
-                    local_path = _resolve_local_path(source_path, workspace_dir)
-                    download_state["source_type"] = "local_path"
-                    download_state["local_path"] = str(local_path)
-                    return ReplyResult(message="Local path resolved")
-
-                # downloader
-                downloader = ConversableAgent(
-                    name="SourceDownloader",
-                    system_message=SOURCE_DOWNLOADER_SYSTEM_PROMPT,
-                    llm_config=llm_config,
-                    functions=[tool_clone_git_repo, tool_download_url, tool_resolve_local_path],
+                resolved = _resolve_source_input(
+                    source=source,
+                    workspace_dir=workspace_dir,
+                    bundle_dir=bundle_dir,
+                    timeout_seconds=timeout_seconds,
+                    max_total_bytes=max_total_bytes_per_item,
                 )
-                downloader_ctx = ContextVariables(data={"source_input": source})
-                download_pattern = DefaultPattern(
-                    initial_agent=downloader,
-                    agents=[downloader],
-                    context_variables=downloader_ctx,
-                    group_manager_args={"llm_config": llm_config},
-                )
-                downloader.handoffs.set_after_work(TerminateTarget())
-
-                download_prompt = SOURCE_DOWNLOADER_ITEM_PROMPT.format(source_input=source)
-                download_kwargs = {}
-                download_kwargs["max_rounds"] = max_rounds_download if max_rounds_download is not None else 3
-                download_result, _, _ = initiate_group_chat(
-                    pattern=download_pattern,
-                    messages=download_prompt,
-                    **download_kwargs,
-                )
-
-                local_path = download_state.get("local_path")
-                if not local_path:
-                    raise WorkflowError("SourceDownloader did not resolve local_path")
-                root_path = Path(local_path).resolve()
-                root_is_file = root_path.is_file()
-
-                history_messages.append(
-                    {
-                        "name": "system",
-                        "content": f"=== source_download_start {item_id} ===",
-                    }
-                )
-                history_messages.extend(download_result.chat_history)
-                history_messages.append(
-                    {
-                        "name": "system",
-                        "content": f"=== source_download_end {item_id} ===",
-                    }
-                )
-
-                item_meta["source_type"] = download_state.get("source_type")
-                item_meta["resolved_from"] = download_state.get("resolved_from")
-                item_meta["local_path"] = str(local_path)
-
-                snapshot = _collect_path_snapshot(
-                    Path(local_path),
+                item_meta.update(resolved)
+                prepared = _prepare_source_bundle(
+                    item_meta=item_meta,
+                    workspace_dir=workspace_dir,
                     max_files=max_files_per_item,
                     max_depth=max_depth,
+                    max_bytes_per_file=max_bytes_per_file,
+                    max_total_bytes_per_item=max_total_bytes_per_item,
+                    max_preview_rows=max_preview_rows,
                 )
-                key_files = _pick_key_files(snapshot.get("files", []), limit=8)
-                item_meta["snapshot"] = {
-                    "kind": snapshot.get("kind"),
-                    "file_count": snapshot.get("file_count", 0),
-                    "truncated": snapshot.get("truncated", False),
-                    "tree": snapshot.get("tree", []),
-                    "key_files": key_files,
-                }
-
-                def _resolve_allowed_path(path_str: str) -> Path:
-                    raw_path = Path(path_str).expanduser()
-                    if raw_path.is_absolute():
-                        candidate = raw_path.resolve()
-                    else:
-                        candidate_base = root_path if root_path.is_dir() else root_path.parent
-                        candidate = (candidate_base / raw_path).resolve()
-
-                    if root_is_file:
-                        if candidate != root_path:
-                            raise ValueError("Path is outside allowed source scope")
-                    else:
-                        if not candidate.is_relative_to(root_path):
-                            raise ValueError("Path is outside allowed source scope")
-                    return candidate
-
-                def tool_list_structure(
-                    path: Annotated[str, "Path to inspect; default should be local_path"],
-                    max_depth_arg: Annotated[int, "Depth limit"] = max_depth,
-                    max_files_arg: Annotated[int, "File count limit"] = max_files_per_item,
-                ) -> Dict[str, Any]:
-                    target = _resolve_allowed_path(path)
-                    max_files_limit = max_files_arg
-                    if max_files_arg is not None and max_files_per_item is not None:
-                        max_files_limit = min(max_files_arg, max_files_per_item)
-                    elif max_files_per_item is not None:
-                        max_files_limit = max_files_per_item
-
-                    max_depth_limit = max_depth_arg
-                    if max_depth_arg is not None and max_depth is not None:
-                        max_depth_limit = min(max_depth_arg, max_depth)
-                    elif max_depth is not None:
-                        max_depth_limit = max_depth
-
-                    return _collect_path_snapshot(
-                        target,
-                        max_files=max_files_limit,
-                        max_depth=max_depth_limit,
-                    )
-
-                def tool_read_text(
-                    path: Annotated[str, "Path to a text/code file"],
-                    max_bytes_arg: Annotated[int, "Byte limit for this read"] = max_bytes_per_file,
-                ) -> Dict[str, Any]:
-                    target = _resolve_allowed_path(path)
-                    if not target.exists() or not target.is_file():
-                        raise ValueError(f"File not found: {target}")
-
-                    suffix = target.suffix.lower()
-                    if max_bytes_arg is not None and max_bytes_per_file is not None:
-                        per_read_limit = min(max_bytes_arg, max_bytes_per_file)
-                    else:
-                        per_read_limit = max_bytes_arg if max_bytes_arg is not None else max_bytes_per_file
-
-                    used = read_budget["used"]
-                    if max_total_bytes_per_item is not None:
-                        remaining = max_total_bytes_per_item - used
-                        if remaining <= 0:
-                            raise RuntimeError("Read budget exceeded for this source item")
-                        effective_limit = remaining if per_read_limit is None else min(per_read_limit, remaining)
-                    else:
-                        effective_limit = per_read_limit
-
-                    if suffix == ".pdf":
-                        preview = _read_pdf_text(target, max_bytes=effective_limit)
-                    elif suffix == ".docx":
-                        preview = _read_docx_text(target, max_bytes=effective_limit)
-                    elif suffix == ".pptx":
-                        preview = _read_pptx_text(target, max_bytes=effective_limit)
-                    elif suffix == ".xlsx":
-                        preview = _read_excel_text(target, max_bytes=effective_limit)
-                    else:
-                        preview = _read_text_preview(target, max_bytes=effective_limit)
-                    if max_total_bytes_per_item is not None:
-                        consumed = preview["size"] if effective_limit is None else min(preview["size"], effective_limit)
-                        read_budget["used"] = used + consumed
-                    return preview
-
-                def tool_preview_structured(
-                    path: Annotated[str, "Path to csv/tsv/json/jsonl file"],
-                    max_rows_arg: Annotated[int, "Row/object preview count"] = max_preview_rows,
-                    max_bytes_arg: Annotated[int, "Byte read limit"] = max_bytes_per_file,
-                ) -> Dict[str, Any]:
-                    target = _resolve_allowed_path(path)
-                    if not target.exists() or not target.is_file():
-                        raise ValueError(f"File not found: {target}")
-
-                    if max_bytes_arg is not None and max_bytes_per_file is not None:
-                        per_read_limit = min(max_bytes_arg, max_bytes_per_file)
-                    else:
-                        per_read_limit = max_bytes_arg if max_bytes_arg is not None else max_bytes_per_file
-
-                    used = read_budget["used"]
-                    if max_total_bytes_per_item is not None:
-                        remaining = max_total_bytes_per_item - used
-                        if remaining <= 0:
-                            raise RuntimeError("Read budget exceeded for this source item")
-                        effective_limit = remaining if per_read_limit is None else min(per_read_limit, remaining)
-                    else:
-                        effective_limit = per_read_limit
-
-                    max_rows_limit = max_rows_arg
-                    if max_rows_arg is not None and max_preview_rows is not None:
-                        max_rows_limit = min(max_rows_arg, max_preview_rows)
-                    elif max_preview_rows is not None:
-                        max_rows_limit = max_preview_rows
-
-                    preview = _preview_structured_file(target, max_rows=max_rows_limit, max_bytes=effective_limit)
-                    if max_total_bytes_per_item is not None:
-                        raw_size = target.stat().st_size
-                        consumed = raw_size if effective_limit is None else min(raw_size, effective_limit)
-                        read_budget["used"] = used + consumed
-                    return preview
-
-                # summarizer
-                summarizer = ConversableAgent(
-                    name="SourceSummarizer",
-                    system_message=SOURCE_SUMMARIZER_SYSTEM_PROMPT,
-                    llm_config=llm_config,
-                    functions=[tool_list_structure, tool_read_text, tool_preview_structured],
-                )
-                summarizer.handoffs.set_after_work(TerminateTarget())
-
-                summarize_ctx = ContextVariables(
-                    data={
-                        "source_input": source,
-                        "local_path": str(local_path),
-                    }
-                )
-                summarize_pattern = DefaultPattern(
-                    initial_agent=summarizer,
-                    agents=[summarizer],
-                    context_variables=summarize_ctx,
-                    group_manager_args={"llm_config": llm_config},
-                )
-
-                prompt = SOURCE_INGESTION_ITEM_PROMPT.format(
-                    source_input=source,
-                    source_type=item_meta["source_type"],
-                    local_path=str(local_path),
-                    file_count=snapshot.get("file_count", 0),
-                    key_files=", ".join(key_files) if key_files else "(none)",
-                )
-
-                summarize_kwargs = {}
-                if max_rounds_summary is not None:
-                    summarize_kwargs["max_rounds"] = max_rounds_summary
-                result, _, _ = initiate_group_chat(
-                    pattern=summarize_pattern,
-                    messages=prompt,
-                    **summarize_kwargs,
-                )
-
-                summary_md: Optional[str] = None
-                for msg in reversed(result.chat_history):
-                    if msg.get("name") == summarizer.name and msg.get("content"):
-                        summary_md = str(msg["content"]).strip()
-                        break
-
-                if not summary_md:
-                    raise WorkflowError("SourceSummarizer did not generate summary")
-
-                item_history = result.chat_history
-
-                item_meta["status"] = "completed"
-                item_meta["summary_path"] = "knowledge/knowledge_summary.md"
-                summary_blocks.append(
-                    "\n".join(
-                        [
-                            f"## Source {idx}: `{source}`",
-                            f"- item_id: `{item_id}`",
-                            f"- source_type: `{item_meta['source_type']}`",
-                            f"- local_path: `{item_meta['local_path']}`",
-                            f"- file_count: `{snapshot.get('file_count', 0)}`",
-                            "",
-                            summary_md,
-                        ]
-                    )
-                )
-
-                history_messages.append(
-                    {
-                        "name": "system",
-                        "content": f"=== source_item_start {item_id} ===",
-                    }
-                )
-                history_messages.extend(item_history)
-                history_messages.append(
-                    {
-                        "name": "system",
-                        "content": f"=== source_item_end {item_id} ===",
-                    }
-                )
-
-                log_stage(workspace_dir, "source_ingestion", f"Processed source {idx}/{len(sources)}: {source}")
-
+                item_meta.update(prepared)
+                item_meta["status"] = "prepared"
+                log_stage(workspace_dir, "source_ingestion", f"Prepared source {idx}/{len(sources)}: {source}")
             except Exception as item_error:
                 item_meta["errors"].append(str(item_error))
-                log_stage(
-                    workspace_dir,
-                    "source_ingestion",
-                    f"Source failed ({source}): {item_error}",
-                )
+                item_meta["parse_status"] = "failed"
+                item_meta["blog_status"] = "failed"
+                log_stage(workspace_dir, "source_ingestion", f"Source failed ({source}): {item_error}")
 
             metadata_items.append(item_meta)
 
+        prepared_items = [item for item in metadata_items if item.get("status") == "prepared"]
+        if not prepared_items:
+            raise WorkflowError("All source items failed during source ingestion")
+
+        # build blogs in parallel
+        log_stage(workspace_dir, "source_ingestion", f"Generating blogs for {len(prepared_items)} prepared sources")
+        blog_jobs = [
+            {
+                "key": idx,
+                "prompt": _build_source_blog_prompt(entry, workspace_dir),
+                "agent_name": "SourceBlogger",
+            }
+            for idx, entry in enumerate(prepared_items)
+        ]
+        indexed_blogs = run_jobs_in_parallel(
+            jobs=blog_jobs,
+            worker=lambda job: _generate_markdown_with_agent(
+                prompt=job["prompt"],
+                llm_config=llm_config,
+                agent_name=job.get("agent_name", "SourceBlogger"),
+            ),
+            max_workers=len(blog_jobs),
+            progress_desc="Building source blogs",
+        )
+
+        for idx, item in enumerate(prepared_items):
+            item["status"] = "completed"
+            item["blog_status"] = "completed"
+            item["summary_path"] = "knowledge/knowledge.md"
+
+        blog_blocks = assemble_markdown_blog_blocks(
+            entries=prepared_items,
+            workspace_dir=workspace_dir,
+            indexed_blogs=indexed_blogs,
+            metadata_title="Source Metadata",
+            metadata_fields=_source_metadata_field_specs(),
+            block_label="Source",
+            hint_label="Source Hint",
+            hint_builder=_build_source_hint,
+            write_blog=True,
+        )
+
+        # summarizer
+        knowledge_prompt = SOURCE_KNOWLEDGE_SYNTHESIS_PROMPT.format(
+            task=task_context,
+            blogs_text="\n\n---\n\n".join(blog_blocks),
+        )
+        knowledge_body = _generate_markdown_with_agent(
+            prompt=knowledge_prompt,
+            llm_config=llm_config,
+            agent_name="SourceKnowledgeSummarizer",
+        )
+        knowledge_content = knowledge_body.strip()
+        metadata_appendix = _build_source_metadata_appendix(prepared_items)
+        if metadata_appendix:
+            knowledge_content = f"{knowledge_content}\n\n---\n\n{metadata_appendix}"
+
         success_count = sum(1 for item in metadata_items if item.get("status") == "completed")
         failed_count = len(metadata_items) - success_count
-
         metadata = {
             "generated_at": datetime.now().isoformat(),
             "node": "source_ingestion",
@@ -427,43 +228,17 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         }
 
         metadata_path = knowledge_dir / "metadata.json"
+        knowledge_path = knowledge_dir / "knowledge.md"
         save_json(metadata, metadata_path)
-
-        summary_header = [
-            "# Source Ingestion Summary",
-            "",
-            f"- generated_at: `{datetime.now().isoformat()}`",
-            f"- total_sources: `{len(metadata_items)}`",
-            f"- successful: `{success_count}`",
-            f"- failed: `{failed_count}`",
-            "",
-        ]
-
-        summary_content = "\n\n".join(summary_header + summary_blocks) if summary_blocks else "\n".join(summary_header)
-
-        summary_path = knowledge_dir / "knowledge_summary.md"
-        save_markdown(summary_content, summary_path)
-        log_stage(
-            workspace_dir,
-            "source_ingestion",
-            f"Wrote knowledge summary: {summary_path}",
-        )
-
-        save_agent_history(
-            workspace_dir=workspace_dir,
-            node_name="source_ingestion",
-            messages=history_messages,
-        )
-
-        if success_count == 0:
-            raise WorkflowError("All source items failed during source ingestion")
+        save_markdown(knowledge_content, knowledge_path)
+        log_stage(workspace_dir, "source_ingestion", f"Wrote knowledge synthesis: {knowledge_path}")
 
         log_stage(workspace_dir, "source_ingestion", f"Completed. success={success_count}, failed={failed_count}")
 
         update_state = {
             "stage": "source_ingestion",
             "knowledge": {
-                "summary_path": str(summary_path),
+                "summary_path": str(knowledge_path),
                 "metadata_path": str(metadata_path),
                 "stats": metadata.get("stats", {}),
             },
@@ -526,44 +301,507 @@ KEY_FILENAME_PRIORITY = {
     "main.py",
 }
 
+SOURCE_BLOG_TEXT_SUFFIXES = {
+    ".md",
+    ".txt",
+}
 
-def _extract_sources_from_input(input_text: str) -> List[str]:
-    lines = input_text.splitlines()
-    in_sources = False
-    sources: List[str] = []
+SOURCE_BLOG_DOCUMENT_SUFFIXES = {
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+}
 
-    for line in lines:
-        stripped = line.strip()
-        heading = re.match(r"^#{1,6}\s+(.+)$", stripped)
-        if heading:
-            title = heading.group(1).strip().lower()
-            if title == "sources":
-                in_sources = True
-                continue
-            if in_sources:
-                break
+SOURCE_BLOG_STRUCTURED_SUFFIXES = {
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+}
 
-        if not in_sources:
+def _source_metadata_field_specs() -> List[tuple[str, Any]]:
+    return [
+        ("Source Input", "source_input"),
+        ("Source Type", "source_type"),
+        ("Resolved From", lambda entry: entry.get("resolved_from") or ""),
+        ("Local Path", "local_path"),
+        ("Prepared Markdown", "prepared_md_path"),
+        ("Parse Status", lambda entry: entry.get("parse_status", "unknown")),
+        ("File Count", lambda entry: entry.get("snapshot", {}).get("file_count", 0)),
+    ]
+
+def _generate_markdown_with_agent(prompt: str, llm_config: Dict[str, Any], agent_name: str) -> str:
+    agent = ConversableAgent(
+        name=agent_name,
+        human_input_mode="NEVER",
+        system_message="",
+        llm_config=llm_config,
+    )
+    reply = agent.generate_reply(messages=[{"role": "user", "content": prompt}], sender=None)
+    if isinstance(reply, dict):
+        content = str(reply.get("content", "")).strip()
+    else:
+        content = str(reply).strip()
+    content = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n", "", content)
+    content = re.sub(r"\n?```$", "", content).strip()
+    return content
+
+
+def _build_source_hint(entry: Dict[str, Any]) -> Optional[str]:
+    source_type = entry.get("source_type")
+    source_input = entry.get("source_input")
+    if not source_input:
+        return None
+    return f"{source_type or 'source'}: {source_input}"
+
+
+def _build_source_metadata_appendix(items: List[Dict[str, Any]]) -> str:
+    lines = ["## Source Metadata Appendix", ""]
+    for idx, entry in enumerate(items, start=1):
+        lines.extend(
+            [
+                f"### Source {idx}",
+                f"- item_id: `{entry.get('item_id', '')}`",
+                f"- source_input: `{entry.get('source_input', '')}`",
+                f"- source_type: `{entry.get('source_type', '')}`",
+                f"- local_path: `{entry.get('local_path', '')}`",
+                f"- prepared_md_path: `{entry.get('prepared_md_path', '')}`",
+                f"- blog_path: `{entry.get('blog_path', '')}`",
+                f"- parse_status: `{entry.get('parse_status', 'unknown')}`",
+                f"- blog_status: `{entry.get('blog_status', 'unknown')}`",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+def _resolve_source_input(
+    source: str,
+    workspace_dir: Path,
+    bundle_dir: Path,
+    timeout_seconds: Optional[int],
+    max_total_bytes: Optional[int],
+) -> Dict[str, Any]:
+    if _looks_like_existing_local_path(source, workspace_dir):
+        local_path = _resolve_local_path(source, workspace_dir)
+        return {
+            "source_type": "local_path",
+            "local_path": str(local_path),
+        }
+
+    if _looks_like_git_url(source):
+        local_path = _clone_git_repo(source, bundle_dir / "repo", timeout_seconds=timeout_seconds)
+        return {
+            "source_type": "git_url",
+            "resolved_from": source,
+            "local_path": str(local_path),
+        }
+
+    if _looks_like_http_url(source):
+        local_path = _download_url(
+            source,
+            destination_dir=bundle_dir / "downloads",
+            timeout_seconds=timeout_seconds,
+            max_total_bytes=max_total_bytes,
+        )
+        return {
+            "source_type": "url",
+            "resolved_from": source,
+            "local_path": str(local_path),
+        }
+
+    raise FileNotFoundError(f"Unsupported or unresolved source input: {source}")
+
+
+def _looks_like_existing_local_path(source: str, workspace_dir: Path) -> bool:
+    try:
+        _resolve_local_path(source, workspace_dir)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _looks_like_http_url(source: str) -> bool:
+    parsed = urlparse(source)
+    return parsed.scheme in {"http", "https"}
+
+
+def _looks_like_git_url(source: str) -> bool:
+    if source.startswith("git@"):
+        return True
+    parsed = urlparse(source)
+    if parsed.scheme in {"git", "ssh"}:
+        return True
+    return source.endswith(".git")
+
+
+def _prepare_source_bundle(
+    item_meta: Dict[str, Any],
+    workspace_dir: Path,
+    max_files: Optional[int],
+    max_depth: Optional[int],
+    max_bytes_per_file: Optional[int],
+    max_total_bytes_per_item: Optional[int],
+    max_preview_rows: Optional[int],
+) -> Dict[str, Any]:
+    root_path = Path(str(item_meta["local_path"])).resolve()
+    bundle_dir = workspace_dir / str(item_meta["bundle_dir"])
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    prepared_md_path = bundle_dir / "source.md"
+
+    snapshot = _collect_path_snapshot(root_path, max_files=max_files, max_depth=max_depth)
+    key_files = _pick_key_files(snapshot.get("files", []), limit=8)
+
+    if root_path.is_file():
+        prepared = _prepare_single_source_file_markdown(
+            file_path=root_path,
+            prepared_dir=prepared_md_path.parent,
+            max_bytes=max_bytes_per_file,
+            max_rows=max_preview_rows,
+        )
+        parse_status = "prepared_file"
+    else:
+        prepared = _prepare_source_tree_markdown(
+            root_path=root_path,
+            prepared_dir=prepared_md_path.parent,
+            key_files=key_files,
+            max_bytes_per_file=max_bytes_per_file,
+            max_total_bytes=max_total_bytes_per_item,
+            max_rows=max_preview_rows,
+        )
+        parse_status = "prepared_directory"
+
+    header_lines = [
+        "# Prepared Source",
+        "",
+        f"- Source Input: `{item_meta.get('source_input', '')}`",
+        f"- Source Type: `{item_meta.get('source_type', '')}`",
+        f"- Local Path: `{root_path}`",
+        f"- Snapshot Kind: `{snapshot.get('kind', 'unknown')}`",
+        f"- File Count: `{snapshot.get('file_count', 0)}`",
+        f"- Snapshot Truncated: `{snapshot.get('truncated', False)}`",
+        "",
+        "## Tree Snapshot",
+        "",
+        "```text",
+        "\n".join(snapshot.get("tree", [])) or "(empty)",
+        "```",
+        "",
+        prepared["markdown"].strip(),
+        "",
+    ]
+    save_markdown("\n".join(header_lines), prepared_md_path)
+
+    return {
+        "parse_status": parse_status,
+        "prepared_md_path": get_relative_path(prepared_md_path, workspace_dir),
+        "snapshot": {
+            "kind": snapshot.get("kind"),
+            "file_count": snapshot.get("file_count", 0),
+            "truncated": snapshot.get("truncated", False),
+            "tree": snapshot.get("tree", []),
+            "key_files": key_files,
+        },
+        "preview_kind": prepared.get("preview_kind"),
+        "bytes_used": prepared.get("bytes_used", 0),
+    }
+
+
+def _build_source_blog_prompt(entry: Dict[str, Any], workspace_dir: Path) -> str:
+    prepared_md_path = workspace_dir / str(entry["prepared_md_path"])
+    source_markdown = load_markdown(prepared_md_path) or ""
+    available_images = (
+        "If the prepared markdown already contains embedded markdown images, retain only the ones "
+        "that are clearly important and preserve the original markdown image paths."
+        if "![" in source_markdown
+        else "No extracted images are available in this prepared markdown."
+    )
+    source_metadata = json.dumps(
+        {
+            "item_id": entry.get("item_id"),
+            "source_input": entry.get("source_input"),
+            "source_type": entry.get("source_type"),
+            "resolved_from": entry.get("resolved_from"),
+            "local_path": entry.get("local_path"),
+            "prepared_md_path": entry.get("prepared_md_path"),
+            "snapshot": entry.get("snapshot", {}),
+            "preview_kind": entry.get("preview_kind"),
+            "parse_status": entry.get("parse_status"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return SOURCE_BLOG_PROMPT.format(
+        source_metadata=source_metadata,
+        source_markdown=source_markdown,
+        available_images=available_images,
+    )
+
+
+def _prepare_single_source_file_markdown(
+    file_path: Path,
+    prepared_dir: Path,
+    max_bytes: Optional[int],
+    max_rows: Optional[int],
+) -> Dict[str, Any]:
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
+        return _prepare_pdf_markdown_fragment(
+            file_path=file_path,
+            prepared_dir=prepared_dir,
+            section_title="## Source PDF",
+            max_bytes=max_bytes,
+            use_shared_images_dir=True,
+        )
+
+    preview, preview_kind = _read_supported_preview(file_path, max_bytes=max_bytes, max_rows=max_rows)
+    if preview is None or preview_kind is None:
+        return {
+            "markdown": "\n".join(
+                [
+                    "## Source File",
+                    "",
+                    f"- File Name: `{file_path.name}`",
+                    f"- File Suffix: `{suffix or '(none)'}`",
+                    f"- File Size: `{file_path.stat().st_size}`",
+                    "",
+                    "_This source file type is currently not previewed directly. The bundle includes only structural metadata._",
+                ]
+            ),
+            "preview_kind": "binary_or_unsupported",
+            "bytes_used": 0,
+        }
+
+    markdown = _format_source_preview_markdown(
+        file_path=file_path,
+        preview=preview,
+        preview_kind=preview_kind,
+        target_dir=prepared_dir,
+    )
+    return {
+        "markdown": markdown,
+        "preview_kind": preview_kind,
+        "bytes_used": _estimate_preview_bytes(file_path, max_bytes=max_bytes),
+    }
+
+
+def _prepare_source_tree_markdown(
+    root_path: Path,
+    prepared_dir: Path,
+    key_files: List[str],
+    max_bytes_per_file: Optional[int],
+    max_total_bytes: Optional[int],
+    max_rows: Optional[int],
+) -> Dict[str, Any]:
+    used_bytes = 0
+    sections = [
+        "## High-Signal Files",
+        "",
+    ]
+
+    if not key_files:
+        sections.append("_No high-signal files were selected from this directory._")
+
+    for relative_path in key_files:
+        file_path = root_path / relative_path
+        remaining = None if max_total_bytes is None else max_total_bytes - used_bytes
+        if remaining is not None and remaining <= 0:
+            sections.extend(
+                [
+                    f"### `{relative_path}`",
+                    "",
+                    "_Skipped because the per-item read budget was exhausted._",
+                    "",
+                ]
+            )
             continue
 
-        bullet = re.match(r"^[-*+]\s+(.+)$", stripped)
-        if bullet:
-            source = bullet.group(1).strip()
-            if source:
-                sources.append(source)
+        effective_limit = max_bytes_per_file
+        if remaining is not None:
+            effective_limit = remaining if effective_limit is None else min(effective_limit, remaining)
 
-    deduped: List[str] = []
-    seen = set()
-    for source in sources:
-        if source not in seen:
-            deduped.append(source)
-            seen.add(source)
-    return deduped
+        if file_path.suffix.lower() == ".pdf":
+            pdf_fragment = _prepare_pdf_markdown_fragment(
+                file_path=file_path,
+                prepared_dir=prepared_dir,
+                section_title=f"### `{relative_path}`",
+                max_bytes=effective_limit,
+            )
+            used_bytes += pdf_fragment["bytes_used"]
+            sections.extend(
+                [
+                    pdf_fragment["markdown"],
+                    "",
+                ]
+            )
+            continue
+
+        preview, preview_kind = _read_supported_preview(file_path, max_bytes=effective_limit, max_rows=max_rows)
+        if preview is None or preview_kind is None:
+            sections.extend(
+                [
+                    f"### `{relative_path}`",
+                    "",
+                    "_This file type is currently represented by metadata only._",
+                    "",
+                ]
+            )
+            continue
+
+        used_bytes += _estimate_preview_bytes(file_path, max_bytes=effective_limit)
+        sections.extend(
+            [
+                f"### `{relative_path}`",
+                "",
+                _format_source_preview_markdown(
+                    file_path=file_path,
+                    preview=preview,
+                    preview_kind=preview_kind,
+                    target_dir=prepared_dir,
+                ),
+                "",
+            ]
+        )
+
+    return {
+        "markdown": "\n".join(sections).strip(),
+        "preview_kind": "directory",
+        "bytes_used": used_bytes,
+    }
+
+
+def _prepare_pdf_markdown_fragment(
+    file_path: Path,
+    prepared_dir: Path,
+    section_title: str,
+    max_bytes: Optional[int],
+    use_shared_images_dir: bool = False,
+) -> Dict[str, Any]:
+    if use_shared_images_dir:
+        images_dir = prepared_dir / "images"
+    else:
+        assets_dir = prepared_dir / "_pdf_assets" / _safe_asset_id(file_path)
+        images_dir = assets_dir / "images"
+    pdf_parse = extract_pdf_markdown_with_images(
+        file_path,
+        images_dir=images_dir,
+        markdown_dir=prepared_dir,
+    )
+
+    if pdf_parse["parse_status"] == "fulltext":
+        markdown = "\n".join(
+            [
+                section_title,
+                "",
+                f"- Preview Kind: `document`",
+                f"- Source PDF: `{file_path.name}`",
+                f"- Parser Used: `{pdf_parse['parser_used']}`",
+                f"- Extracted Images: `{pdf_parse['image_count']}`",
+                "",
+                pdf_parse["markdown_body"],
+            ]
+        )
+    else:
+        raise RuntimeError(f"PDF parsing failed for {file_path}")
+
+    return {
+        "markdown": markdown,
+        "preview_kind": "document",
+        "bytes_used": _estimate_preview_bytes(file_path, max_bytes=max_bytes),
+    }
+
+
+def _read_supported_preview(
+    file_path: Path,
+    max_bytes: Optional[int],
+    max_rows: Optional[int],
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    suffix = file_path.suffix.lower()
+
+    if suffix in SOURCE_BLOG_TEXT_SUFFIXES:
+        preview = _read_text_preview(file_path, max_bytes=max_bytes)
+        return preview, "markdown" if suffix == ".md" else "text"
+    if suffix in SOURCE_BLOG_DOCUMENT_SUFFIXES:
+        if suffix == ".docx":
+            return _read_docx_text(file_path, max_bytes=max_bytes), "document"
+        if suffix == ".pptx":
+            return _read_pptx_text(file_path, max_bytes=max_bytes), "document"
+        return _read_excel_text(file_path, max_bytes=max_bytes), "document"
+    if suffix in SOURCE_BLOG_STRUCTURED_SUFFIXES:
+        return _preview_structured_file(file_path, max_rows=max_rows, max_bytes=max_bytes), "structured"
+    return None, None
+
+
+def _format_source_preview_markdown(
+    file_path: Path,
+    preview: Dict[str, Any],
+    preview_kind: str,
+    target_dir: Path,
+) -> str:
+    if preview_kind == "markdown":
+        content = (preview.get("content") or "").strip()
+        if content:
+            content = rewrite_markdown_paths(
+                content,
+                source_dir=file_path.parent,
+                target_dir=target_dir,
+            )
+        return content or "_No markdown content extracted from this source file._"
+
+    if preview_kind == "structured":
+        preview_json = json.dumps(preview, ensure_ascii=False, indent=2, default=str)
+        return "\n".join(
+            [
+                "- Preview Kind: `structured`",
+                "- Structured payload preview:",
+                "",
+                "```json",
+                preview_json,
+                "```",
+            ]
+        )
+
+    content = (preview.get("content") or "").strip()
+    return "\n".join(
+        [
+            f"- Preview Kind: `{preview_kind}`",
+            f"- Truncated: `{preview.get('truncated', False)}`",
+            "",
+            content or "_No text extracted from this source file._",
+        ]
+    )
+
+
+def _estimate_preview_bytes(file_path: Path, max_bytes: Optional[int]) -> int:
+    size = file_path.stat().st_size
+    return size if max_bytes is None else min(size, max_bytes)
+
+
+def _safe_asset_id(file_path: Path) -> str:
+    digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:8]
+    stem = re.sub(r"[^a-zA-Z0-9._-]+", "_", file_path.stem).strip("._")[:32] or "asset"
+    return f"{stem}_{digest}"
 
 
 def _safe_item_id(index: int, source: str) -> str:
-    digest = hashlib.sha1(source.encode("utf-8")).hexdigest()[:8]
-    return f"{index:03d}_{digest}"
+    # Use a deterministic hash of the source input to generate a unique ID for each item.
+    parsed = urlparse(source)
+    if parsed.scheme and (parsed.path or parsed.netloc):
+        name_hint = Path(parsed.path).name or parsed.netloc
+    else:
+        name_hint = Path(source).name or source
+
+    if name_hint.endswith(".git"):
+        name_hint = name_hint[:-4]
+
+    sanitized_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", name_hint).strip("._-").lower()
+    if not sanitized_name:
+        sanitized_name = "source"
+    sanitized_name = sanitized_name[:32]
+
+    digest = hashlib.sha1(source.encode("utf-8")).hexdigest()[:12]
+    return f"{index:03d}_{sanitized_name}_{digest}"
 
 
 def _resolve_local_path(source: str, workspace_dir: Path) -> Path:
@@ -768,26 +1006,6 @@ def _truncate_by_bytes(content: str, max_bytes: Optional[int]) -> tuple[str, boo
         return content, False
     trimmed = raw[:max_bytes].decode("utf-8", errors="ignore")
     return trimmed, True
-
-
-def _read_pdf_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:
-    from pypdf import PdfReader
-
-    file_size = file_path.stat().st_size
-    reader = PdfReader(str(file_path))
-    chunks: List[str] = []
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        if text:
-            chunks.append(text)
-    content = "\n\n".join(chunks).strip()
-    content, truncated = _truncate_by_bytes(content, max_bytes)
-    return {
-        "path": str(file_path),
-        "size": file_size,
-        "truncated": truncated,
-        "content": content,
-    }
 
 
 def _read_docx_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any]:

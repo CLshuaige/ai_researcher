@@ -45,7 +45,7 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         if not input_text:
             raise WorkflowError("Input file not found")
 
-        summary_path = workspace_dir / "knowledge" / "knowledge_summary.md"
+        summary_path = workspace_dir / "knowledge" / "knowledge.md"
         summary_text = load_markdown(summary_path)
         if summary_text:
             input_text = (

@@ -1,6 +1,7 @@
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List, Callable, Sequence, Tuple
 from datetime import datetime
 import json
 import os
@@ -50,6 +51,180 @@ def clean_markdown_identifiers(content: str) -> str:
         cleaned = re.sub(pattern, '', cleaned, flags=re.MULTILINE)
     
     return cleaned
+
+
+def run_jobs_in_parallel(
+    jobs: List[Dict[str, Any]],
+    worker: Callable[[Dict[str, Any]], Any],
+    max_workers: Optional[int] = None,
+    progress_desc: Optional[str] = None,
+) -> Dict[Any, Any]:
+    """Run keyed jobs in parallel and collect their results."""
+    if not jobs:
+        return {}
+
+    max_workers = max_workers or len(jobs)
+    results: Dict[Any, Any] = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(worker, job): job["key"]
+            for job in jobs
+        }
+
+        # Wait for all futures to complete
+        completed = as_completed(futures)
+        if progress_desc:
+            from tqdm import tqdm
+            completed = tqdm(completed, total=len(futures), desc=progress_desc)
+
+        for future in completed:
+            key = futures[future]
+            results[key] = future.result()
+
+    return results
+
+
+def resolve_workspace_path(path_value: Any, workspace_dir: Path) -> Path:
+    """Resolve a workspace-relative path to an absolute path."""
+    path = Path(str(path_value))
+    return path if path.is_absolute() else workspace_dir / path
+
+
+def rewrite_markdown_paths(markdown_text: str, source_dir: Path, target_dir: Path) -> str:
+    """Rewrite local markdown resource paths to stay valid from a new base directory."""
+    def replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        label = match.group(2)
+        raw_path = match.group(3).strip()
+        if re.match(r"^(?:https?:|data:|file:|#)", raw_path):
+            return match.group(0)
+        resolved = (source_dir / raw_path).resolve()
+        relative_path = Path(os.path.relpath(resolved, start=target_dir.resolve())).as_posix()
+        return f"{prefix}[{label}]({relative_path})"
+
+    return re.sub(r"(!?)\[([^\]]*)\]\(([^)]+)\)", replace, markdown_text)
+
+
+def format_markdown_metadata_header(
+    title: str,
+    entry: Dict[str, Any],
+    field_specs: Sequence[Tuple[str, Any]],
+) -> str:
+    """Build a markdown metadata header from field specs."""
+    lines = [f"# {title}", ""]
+    for label, spec in field_specs:
+        value = spec(entry) if callable(spec) else entry.get(str(spec))
+        if isinstance(value, list):
+            value_text = ", ".join(str(v) for v in value if v not in (None, ""))
+        elif value is None:
+            value_text = ""
+        else:
+            value_text = str(value)
+        lines.append(f"- {label}: {value_text}")
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def assemble_markdown_blog_blocks(
+    entries: List[Dict[str, Any]],
+    workspace_dir: Path,
+    *,
+    metadata_title: str,
+    metadata_fields: Sequence[Tuple[str, Any]],
+    block_label: str,
+    hint_label: str,
+    hint_builder: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
+    indexed_blogs: Optional[Dict[Any, str]] = None,
+    write_blog: bool = False,
+) -> List[str]:
+    """Assemble numbered markdown blocks from blog files."""
+    blog_blocks: List[str] = []
+
+    for idx, entry in enumerate(entries, start=1):
+        blog_path = resolve_workspace_path(entry["blog_path"], workspace_dir)
+        if indexed_blogs is not None:
+            blog_body = indexed_blogs[idx - 1]
+            blog_header = format_markdown_metadata_header(
+                title=metadata_title,
+                entry=entry,
+                field_specs=metadata_fields,
+            )
+            full_blog_content = blog_header + blog_body
+            if write_blog:
+                save_markdown(full_blog_content, blog_path)
+        else:
+            full_blog_content = load_markdown(blog_path) or ""
+
+        blog_content_for_summary = rewrite_markdown_paths(
+            full_blog_content,
+            source_dir=blog_path.parent,
+            target_dir=workspace_dir,
+        )
+
+        block_lines = [f"## {block_label} {idx}"]
+        if hint_builder:
+            hint = hint_builder(entry)
+            if hint:
+                block_lines.append(f"- {hint_label}: {hint}")
+        block_lines.extend(["", blog_content_for_summary])
+        blog_blocks.append("\n".join(block_lines))
+
+    return blog_blocks
+
+
+def extract_pdf_markdown_with_images(
+    pdf_path: Path,
+    *,
+    images_dir: Path,
+    markdown_dir: Path,
+) -> Dict[str, Any]:
+    """Parse a PDF into markdown content with extracted figures embedded as markdown images."""
+    import fitz  # type: ignore
+
+    images_dir.mkdir(parents=True, exist_ok=True)
+    doc = None
+
+    try:
+        doc = fitz.open(str(pdf_path))
+        sections: List[str] = []
+        image_count = 0
+
+        for page_idx, page in enumerate(doc, start=1):
+            text = (page.get_text("text") or "").strip()
+            chunk_lines = [f"## Page {page_idx}", "", text if text else "_No text extracted on this page._"]
+
+            for image_idx, image_info in enumerate(page.get_images(full=True), start=1):
+                xref = image_info[0]
+                pixmap = fitz.Pixmap(doc, xref)
+                if pixmap.n >= 5:
+                    pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+                image_name = f"page_{page_idx:03d}_img_{image_idx:02d}.png"
+                image_path = images_dir / image_name
+                pixmap.save(str(image_path))
+                pixmap = None
+                image_count += 1
+                image_rel_path = get_relative_path(image_path, markdown_dir)
+                chunk_lines.append(f"![Figure p{page_idx}-{image_idx}]({image_rel_path})")
+
+            sections.append("\n".join(chunk_lines).strip())
+
+        return {
+            "parse_status": "fulltext",
+            "parser_used": "fitz",
+            "image_count": image_count,
+            "markdown_body": "\n\n".join(sections).strip(),
+        }
+    except Exception:
+        return {
+            "parse_status": "metadata_only",
+            "parser_used": "fitz_failed",
+            "image_count": 0,
+            "markdown_body": "",
+        }
+    finally:
+        if doc is not None:
+            doc.close()
 
 
 def save_markdown(content: str, filepath: Path) -> None:
