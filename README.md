@@ -86,3 +86,37 @@ API endpoints:
 - `GET /api/v1/projects/{project_id}/history/{node_name}`: node history files.
 - `GET /api/v1/projects/{project_id}/logs?tail_lines=200`: logs.
 - `WS /api/v1/projects/{project_id}/events`: realtime events.
+- `POST /api/v1/projects/{project_id}/input`: user input request.
+
+### Local Files Upload for Source Ingestion
+
+Upload these files to `input/` via `PUT /api/v1/projects/{project_id}/files/{file_path}`.
+
+1. `input/sources_url.json`: declare URL/git sources.
+
+```json
+{
+  "sources": [
+    "https://example.com/spec.pdf",
+    "https://github.com/org/repo.git",
+    "input/local_file.md"
+  ]
+}
+```
+
+2. `input/source_annotations.json`: optional corresponding per-source note.
+
+```json
+{
+  "items": [
+    {
+      "source": "input/local_file.md",
+      "note": "Core project context, keep important constraints."
+    },
+    {
+      "source": "https://example.com/spec.pdf",
+      "note": "Focus on requirements and edge cases."
+    }
+  ]
+}
+```

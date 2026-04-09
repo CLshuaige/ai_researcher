@@ -1,6 +1,7 @@
 """
 Input:
 - `workspace/input/sources_url.json`
+- `workspace/input/source_annotations.json` (optional)
 - local files or directories under `workspace/input/`
 
 Output:
@@ -83,7 +84,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
 
         # Parse sources from workspace_dir / "input"
         for entry in sorted(input_dir.iterdir()):
-            if entry.name.startswith(".") or entry.name == "sources_url.json":
+            if entry.name.startswith(".") or entry.name in SOURCE_BLOG_CONTROL_FILES:
                 continue
             sources.append(str(entry.resolve()))
 
@@ -97,6 +98,8 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                 "source_ingestion",
                 f"Source list truncated to max_items={max_items}",
             )
+
+        source_annotations = _load_source_annotations(input_dir=input_dir, workspace_dir=workspace_dir)
 
         knowledge_dir = workspace_dir / "knowledge"
         bundles_root = knowledge_dir / "sources"
@@ -124,8 +127,18 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                 "parse_status": "pending",
                 "blog_status": "pending",
                 "blog_error": None,
+                "user_note": "",
                 "errors": [],
             }
+
+            annotation = _find_source_annotation(
+                source=source,
+                annotations=source_annotations,
+                workspace_dir=workspace_dir,
+                input_dir=input_dir,
+            )
+            if annotation:
+                item_meta["user_note"] = annotation.get("note", "")
 
             try:
                 resolved = _resolve_source_input(
@@ -320,12 +333,24 @@ SOURCE_BLOG_STRUCTURED_SUFFIXES = {
     ".jsonl",
 }
 
+SOURCE_BLOG_DATABASE_SUFFIXES = {
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+}
+
+SOURCE_BLOG_CONTROL_FILES = {
+    "sources_url.json",
+    "source_annotations.json",
+}
+
 def _source_metadata_field_specs() -> List[tuple[str, Any]]:
     return [
         ("Source Input", "source_input"),
         ("Source Type", "source_type"),
         ("Resolved From", lambda entry: entry.get("resolved_from") or ""),
         ("Local Path", "local_path"),
+        ("User Note", lambda entry: entry.get("user_note") or ""),
         ("Prepared Markdown", "prepared_md_path"),
         ("Parse Status", lambda entry: entry.get("parse_status", "unknown")),
         ("File Count", lambda entry: entry.get("snapshot", {}).get("file_count", 0)),
@@ -366,6 +391,7 @@ def _build_source_metadata_appendix(items: List[Dict[str, Any]]) -> str:
                 f"- source_input: `{entry.get('source_input', '')}`",
                 f"- source_type: `{entry.get('source_type', '')}`",
                 f"- local_path: `{entry.get('local_path', '')}`",
+                f"- user_note: `{entry.get('user_note', '')}`",
                 f"- prepared_md_path: `{entry.get('prepared_md_path', '')}`",
                 f"- blog_path: `{entry.get('blog_path', '')}`",
                 f"- parse_status: `{entry.get('parse_status', 'unknown')}`",
@@ -374,6 +400,78 @@ def _build_source_metadata_appendix(items: List[Dict[str, Any]]) -> str:
             ]
         )
     return "\n".join(lines).strip()
+
+
+def _load_source_annotations(input_dir: Path, workspace_dir: Path) -> Dict[str, Dict[str, str]]:
+    annotations_path = input_dir / "source_annotations.json"
+    if not annotations_path.exists() or not annotations_path.is_file():
+        return {}
+
+    payload = json.loads(annotations_path.read_text(encoding="utf-8"))
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        raise WorkflowError("source_annotations.json must contain a list under 'items'")
+
+    annotations: Dict[str, Dict[str, str]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source", "")).strip()
+        if not source:
+            continue
+
+        note = str(item.get("note", "")).strip()
+        entry = {"note": note}
+        for key in _build_source_annotation_keys(source, workspace_dir=workspace_dir, input_dir=input_dir):
+            annotations[key] = entry
+
+    return annotations
+
+
+def _build_source_annotation_keys(source: str, workspace_dir: Path, input_dir: Path) -> List[str]:
+    normalized = str(source).strip()
+    if not normalized:
+        return []
+
+    keys: List[str] = [normalized]
+    parsed = urlparse(normalized)
+    if parsed.scheme in {"http", "https", "git", "ssh"} or normalized.startswith("git@"):
+        return keys
+
+    try:
+        local_path = _resolve_local_path(normalized, workspace_dir)
+        keys.append(str(local_path))
+        try:
+            keys.append(get_relative_path(local_path, workspace_dir))
+        except Exception:
+            pass
+        try:
+            keys.append(get_relative_path(local_path, input_dir))
+        except Exception:
+            pass
+    except Exception:
+        path_obj = Path(normalized)
+        keys.append(path_obj.as_posix())
+        if not path_obj.is_absolute():
+            keys.append((workspace_dir / path_obj).as_posix())
+
+    # Keep insertion order while removing duplicates.
+    return list(dict.fromkeys(keys))
+
+
+def _find_source_annotation(
+    source: str,
+    annotations: Dict[str, Dict[str, str]],
+    workspace_dir: Path,
+    input_dir: Path,
+) -> Optional[Dict[str, str]]:
+    if not annotations:
+        return None
+
+    for key in _build_source_annotation_keys(source, workspace_dir=workspace_dir, input_dir=input_dir):
+        if key in annotations:
+            return annotations[key]
+    return None
 
 
 def _resolve_source_input(
@@ -524,6 +622,7 @@ def _build_source_blog_prompt(entry: Dict[str, Any], workspace_dir: Path) -> str
             "source_type": entry.get("source_type"),
             "resolved_from": entry.get("resolved_from"),
             "local_path": entry.get("local_path"),
+            "user_note": entry.get("user_note"),
             "prepared_md_path": entry.get("prepared_md_path"),
             "snapshot": entry.get("snapshot", {}),
             "preview_kind": entry.get("preview_kind"),
@@ -557,21 +656,7 @@ def _prepare_single_source_file_markdown(
 
     preview, preview_kind = _read_supported_preview(file_path, max_bytes=max_bytes, max_rows=max_rows)
     if preview is None or preview_kind is None:
-        return {
-            "markdown": "\n".join(
-                [
-                    "## Source File",
-                    "",
-                    f"- File Name: `{file_path.name}`",
-                    f"- File Suffix: `{suffix or '(none)'}`",
-                    f"- File Size: `{file_path.stat().st_size}`",
-                    "",
-                    "_This source file type is currently not previewed directly. The bundle includes only structural metadata._",
-                ]
-            ),
-            "preview_kind": "binary_or_unsupported",
-            "bytes_used": 0,
-        }
+        raise ValueError(f"Unsupported source file type: {suffix or '(none)'} ({file_path.name})")
 
     markdown = _format_source_preview_markdown(
         file_path=file_path,
@@ -643,7 +728,7 @@ def _prepare_source_tree_markdown(
                 [
                     f"### `{relative_path}`",
                     "",
-                    "_This file type is currently represented by metadata only._",
+                    f"_Skipped unsupported file type: `{file_path.suffix.lower() or '(none)'}`._",
                     "",
                 ]
             )
@@ -730,6 +815,8 @@ def _read_supported_preview(
         return _read_excel_text(file_path, max_bytes=max_bytes), "document"
     if suffix in SOURCE_BLOG_STRUCTURED_SUFFIXES:
         return _preview_structured_file(file_path, max_rows=max_rows, max_bytes=max_bytes), "structured"
+    if suffix in SOURCE_BLOG_DATABASE_SUFFIXES:
+        return _preview_database_file(file_path, max_rows=max_rows), "database"
     return None, None
 
 
@@ -755,6 +842,19 @@ def _format_source_preview_markdown(
             [
                 "- Preview Kind: `structured`",
                 "- Structured payload preview:",
+                "",
+                "```json",
+                preview_json,
+                "```",
+            ]
+        )
+
+    if preview_kind == "database":
+        preview_json = json.dumps(preview, ensure_ascii=False, indent=2, default=str)
+        return "\n".join(
+            [
+                "- Preview Kind: `database`",
+                "- Database payload preview:",
                 "",
                 "```json",
                 preview_json,
@@ -1062,6 +1162,77 @@ def _read_excel_text(file_path: Path, max_bytes: Optional[int]) -> Dict[str, Any
         "truncated": truncated,
         "content": content,
     }
+
+
+def _preview_database_file(file_path: Path, max_rows: Optional[int]) -> Dict[str, Any]:
+    import sqlite3
+
+    rows_limit = max_rows if isinstance(max_rows, int) and max_rows > 0 else 3
+    tables_limit = 10
+    table_previews: List[Dict[str, Any]] = []
+    connection = None
+    try:
+        connection = sqlite3.connect(f"file:{file_path}?mode=ro", uri=True)
+        cursor = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+        table_names = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+        selected_tables = table_names[:tables_limit]
+        truncated_tables = len(table_names) > tables_limit
+
+        for table_name in selected_tables:
+            safe_name = table_name.replace('"', '""')
+            columns_cursor = connection.execute(f'PRAGMA table_info("{safe_name}")')
+            columns = [
+                {
+                    "name": col[1],
+                    "type": col[2],
+                    "not_null": bool(col[3]),
+                    "default": col[4],
+                    "pk": bool(col[5]),
+                }
+                for col in columns_cursor.fetchall()
+            ]
+
+            sample_cursor = connection.execute(f'SELECT * FROM "{safe_name}" LIMIT {rows_limit}')
+            column_names = [desc[0] for desc in (sample_cursor.description or [])]
+            sample_rows = []
+            for row in sample_cursor.fetchall():
+                sample_rows.append(
+                    {
+                        column_names[idx]: (str(value)[:200] + "..." if isinstance(value, str) and len(value) > 200 else value)
+                        for idx, value in enumerate(row)
+                    }
+                )
+
+            table_previews.append(
+                {
+                    "table": table_name,
+                    "columns": columns,
+                    "sample_rows": sample_rows,
+                    "preview_rows": len(sample_rows),
+                }
+            )
+
+        return {
+            "path": str(file_path),
+            "format": "sqlite",
+            "table_count": len(table_names),
+            "tables_truncated": truncated_tables,
+            "tables": table_previews,
+        }
+    except Exception as exc:
+        return {
+            "path": str(file_path),
+            "format": "sqlite",
+            "table_count": 0,
+            "tables_truncated": False,
+            "tables": [],
+            "error": str(exc),
+        }
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _preview_structured_file(file_path: Path, max_rows: Optional[int], max_bytes: Optional[int]) -> Dict[str, Any]:
