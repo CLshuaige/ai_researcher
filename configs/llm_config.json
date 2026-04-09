@@ -3,7 +3,7 @@
         {
             "api_type": "openai",
             "model": "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Next-80B-A3B-Instruct",
-            "base_url": "http://localhost:8001/v1",
+            "base_url": "http://172.22.162.99:8001/v1",
             "api_key": "EMPTY"
         }
     ],
