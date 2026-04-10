@@ -193,4 +193,7 @@ def enable_skill_prompt() -> str:
                 allowed_skills.append(skill)
     print(allowed_skills)
     # generate prompt
-    return generate_skills_prompt(allowed_skills)
+    formated_skills = generate_skills_prompt(allowed_skills)
+    # instruction
+    instruction = ""
+    return f"{instruction}\n\n{formated_skills}"

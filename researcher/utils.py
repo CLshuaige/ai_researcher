@@ -11,7 +11,14 @@ import tempfile
 import sys
 import uuid
 
-from autogen.events.agent_events import GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent, ErrorEvent
+from autogen.events.agent_events import (
+    GroupChatRunChatEvent, 
+    TextEvent, 
+    InputRequestEvent, 
+    TerminationEvent, 
+    RunCompletionEvent, 
+    ErrorEvent, 
+    ExecutedFunctionEvent, ExecuteFunctionEvent)
 from autogen.agentchat import run_group_chat_iter
 
 from researcher.state import ResearchState
@@ -602,11 +609,13 @@ def iterable_group_chat(
         pattern=pattern,
         messages=prompt,
         max_rounds=max_rounds,
-        yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent, ErrorEvent]
+        # yield_on=[GroupChatRunChatEvent, TextEvent, InputRequestEvent, TerminationEvent, RunCompletionEvent, ErrorEvent, 
+        #           ExecutedFunctionEvent, ExecuteFunctionEvent]
     )
 
     global_history = []
     for step, event in enumerate(iterator, start=1):
+        #print(event)
         if isinstance(event, GroupChatRunChatEvent):
             speaker = str(event.content.speaker)
             print(f"\n{'─' * 60}")
@@ -633,6 +642,26 @@ def iterable_group_chat(
                 sender=sender,
                 content_preview=content,
             )
+        elif isinstance(event, (ExecutedFunctionEvent, ExecuteFunctionEvent)):
+            if isinstance(event, ExecuteFunctionEvent):
+                sender = "Tool Executing..."
+                content = f"`{event.content.func_name}`: {event.content.arguments}"
+            else:
+                sender = "Tool Executed."
+                content = f"{str(event.content.content)[:200]}..."
+            global_history.append({
+                "name": sender,
+                "content": content
+            })
+            print(f"🔧 {sender}: {content}")
+            _publish_event_progress(
+                state,
+                "message",
+                step=step,
+                sender=sender,
+                content_preview=content,
+            )
+
         elif isinstance(event, InputRequestEvent):
             prompt_text = str(event.content.prompt)
             request_id = str(uuid.uuid4())

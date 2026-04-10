@@ -41,7 +41,7 @@ class BaseAgent:
         llm_config: Dict[str, Any],
         enable_context_compression: Optional[bool] = False,
         enable_skill: Optional[bool] = False,
-        functions: Optional[List[Callable]] = [],
+        functions: Optional[List[Callable]] = None,
     ) -> ConversableAgent:
         """Create a ConversableAgent with automatic context compression.
 
@@ -57,10 +57,12 @@ class BaseAgent:
         Returns:
             ConversableAgent with context compression capabilities applied.
         """
+        if functions is None:
+            functions = []
         if enable_skill:
-            functions.extend([load_skill, load_reference])
+            functions.extend([load_skill, load_reference, execute_skill_script])
             skill_prompt = enable_skill_prompt()
-            system_prompt = skill_prompt + "\n\n" + self.system_prompt
+            system_prompt = self.system_prompt + "\n\n" + skill_prompt
         else:
             system_prompt = self.system_prompt
             
