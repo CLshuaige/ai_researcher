@@ -33,9 +33,9 @@ from researcher.utils import (
     load_artifact_from_file,
     load_markdown,
     get_llm_config,
-    load_session_metadata,
     save_agent_history,
-    save_session_metadata,
+    publish_event_progress,
+    set_node_sub_stage,
     iterable_group_chat,
     markdown_to_pdf,
     latex_to_pdf,
@@ -59,15 +59,8 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "literature_review", "Starting literature review")
 
-    def set_sub_stage(sub_stage: str | None) -> None:
-        session = load_session_metadata(workspace_dir) or {}
-        session["stage"] = "literature_review"
-        session["sub_stage"] = sub_stage
-        session["updated_at"] = datetime.now().isoformat()
-        save_session_metadata(workspace_dir, session)
-
     try:
-        set_sub_stage(None)
+        set_node_sub_stage(workspace_dir, "literature_review", None)
         task = load_artifact_from_file(workspace_dir, "task")
         if not task:
             raise WorkflowError("Task file not found")
@@ -82,7 +75,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         template = config.get("latex_template", "default_en")
         lang = config.get("latex_language", "en").lower()
         include_source_ingestion_blogs = config.get("include_source_ingestion_blogs", True)
-        test_summary = True
+        test_summary = False
 
         llm_config = get_llm_config()
 
@@ -220,7 +213,14 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
             if mode == "detailed":
                 blog_blocks: List[str] = []
                 if not test_summary:
-                    set_sub_stage("blog_generating")
+                    set_node_sub_stage(
+                        workspace_dir,
+                        "literature_review",
+                        "blog_generating",
+                        state=state,
+                        progress_event="blog_generating_started",
+                        total_papers=len(unified_metadata),
+                    )
                     blog_jobs = [
                         {
                             "key": idx,
@@ -240,11 +240,25 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                             ),
                             max_workers=max_workers or None,
                             progress_desc="Building blogs",
+                            progress_callback=lambda completed_count, total_count, _key, _result: publish_event_progress(
+                                state,
+                                "blog_generating_progress",
+                                sub_stage="blog_generating",
+                                current_index=completed_count,
+                                total_papers=total_count,
+                            ),
                         )
-                    except Exception:
-                        set_sub_stage("blog_failed")
+                    except Exception as blog_error:
+                        set_node_sub_stage(
+                            workspace_dir,
+                            "literature_review",
+                            "blog_failed",
+                            state=state,
+                            progress_event="blog_generating_failed",
+                            total_papers=len(unified_metadata),
+                            error=str(blog_error),
+                        )
                         raise
-                    set_sub_stage("blog_completed")
                 else:
                     indexed_blogs = None
 
@@ -268,6 +282,18 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
                         write_blog=indexed_blogs is not None,
                     )
                 )
+                if indexed_blogs is not None:
+                    for entry in unified_metadata:
+                        blog_path = resolve_workspace_path(entry["blog_path"], workspace_dir)
+                        markdown_to_pdf(blog_path, blog_path.with_suffix(".pdf"), title=entry.get("title") or "Paper Blog")
+                    set_node_sub_stage(
+                        workspace_dir,
+                        "literature_review",
+                        "blog_completed",
+                        state=state,
+                        progress_event="blog_generating_completed",
+                        total_papers=len(unified_metadata),
+                    )
                 if source_blog_entries:
                     blog_blocks.extend(
                         assemble_markdown_blog_blocks(

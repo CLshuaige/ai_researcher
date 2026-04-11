@@ -1,18 +1,95 @@
-from typing import List, Optional, Dict, Any
+from typing import Annotated, List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, BeforeValidator
 from .latex.utils import extract_latex_code
+
+
+# Prevent the model from producing incorrect outputs at the expected string positions.
+def _normalize_string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple, set)):
+        parts = [_normalize_string(item) for item in value]
+        parts = [part for part in parts if part]
+        return "\n".join(parts)
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return str(value).strip()
+    return str(value).strip()
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items: List[str] = []
+        for item in value:
+            if isinstance(item, (list, tuple, set)):
+                items.extend(_normalize_string_list(item))
+            else:
+                normalized = _normalize_string(item)
+                if normalized:
+                    items.append(normalized)
+        return items
+    normalized = _normalize_string(value)
+    return [normalized] if normalized else []
+
+
+def _normalize_int_list(value: Any) -> List[int]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            decoded = json.loads(text)
+        except Exception:
+            decoded = [segment.strip() for segment in text.split(",")]
+        return _normalize_int_list(decoded)
+    if not isinstance(value, (list, tuple, set)):
+        value = [value]
+
+    numbers: List[int] = []
+    for item in value:
+        if item is None:
+            continue
+        if isinstance(item, bool):
+            numbers.append(int(item))
+            continue
+        if isinstance(item, (int, float)):
+            numbers.append(int(item))
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        try:
+            numbers.append(int(float(text)))
+        except Exception:
+            continue
+    return numbers
+
+
+NormalizedStr = Annotated[str, BeforeValidator(_normalize_string)]
+NormalizedStrList = Annotated[List[str], BeforeValidator(_normalize_string_list)]
+NormalizedIntList = Annotated[List[int], BeforeValidator(_normalize_int_list)]
 
 
 class IdeaCandidate(BaseModel):
     """Single research idea candidate"""
-    content: str = Field(description="Idea description")
+    content: NormalizedStr = Field(description="Idea description")
     score: float = Field(default=0.0, ge=0.0, le=1.0, description="Idea quality score")
-    strengths: List[str] = Field(default_factory=list, description="Idea strengths")
-    weaknesses: List[str] = Field(default_factory=list, description="Idea weaknesses")
+    strengths: NormalizedStrList = Field(default_factory=list, description="Idea strengths")
+    weaknesses: NormalizedStrList = Field(default_factory=list, description="Idea weaknesses")
 
-    basis: str = Field(description="Key scientific basis")
-    components: List[str] = Field(default_factory=list, description="Implementation components")
+    basis: NormalizedStr = Field(description="Key scientific basis")
+    components: NormalizedStrList = Field(default_factory=list, description="Implementation components")
 
     round: int = Field(default=0, description="Round when proposed")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Timestamp in ISO format")
@@ -86,29 +163,29 @@ class ResearchIdea(BaseModel):
 class MethodStep(BaseModel):
     """Single experimental step with role assignment"""
     step_id: int = Field(description="Step ID (1-indexed)")
-    description: str = Field(description="Step description")
-    assignee: str = Field(description="RA or Engineer")
-    dependencies: List[int] = Field(default_factory=list, description="Dependent step IDs")
-    expected_output: str = Field(default="", description="Expected output description")
+    description: NormalizedStr = Field(description="Step description")
+    assignee: NormalizedStr = Field(description="RA or Engineer")
+    dependencies: NormalizedIntList = Field(default_factory=list, description="Dependent step IDs")
+    expected_output: NormalizedStr = Field(default="", description="Expected output description")
     #implement_guidance: str = Field(default="", description="Implementation guidance")
 
 
 class TaskAssignment(BaseModel):
     """Task assignment for RA or Engineer"""
-    role: str = Field(description="RA or Engineer")
-    tasks: List[str] = Field(default_factory=list)
-    dependencies: List[str] = Field(default_factory=list)
+    role: NormalizedStr = Field(description="RA or Engineer")
+    tasks: NormalizedStrList = Field(default_factory=list)
+    dependencies: NormalizedStrList = Field(default_factory=list)
 
 
 class ExperimentalMethod(BaseModel):
     """Experimental method design"""
-    overview: str = Field(description="Method overview")
+    overview: NormalizedStr = Field(description="Method overview")
     steps: List[MethodStep] = Field(default_factory=list, description="Structured execution steps")
-    execution_order: List[int] = Field(default_factory=list, description="Step execution order")
+    execution_order: NormalizedIntList = Field(default_factory=list, description="Step execution order")
     assignments: List[TaskAssignment] = Field(default_factory=list)
     resources: Dict[str, Any] = Field(default_factory=dict, description="Required resources")
     debate_rounds: int = Field(default=0)
-    criticisms: List[str] = Field(default_factory=list)
+    criticisms: NormalizedStrList = Field(default_factory=list)
 
     def to_markdown(self) -> str:
         """Export to markdown format"""
@@ -152,11 +229,11 @@ class ExperimentalMethod(BaseModel):
 
 class ExperimentResult(BaseModel):
     """Experimental results"""
-    summary: str = Field(description="Result summary")
-    data_paths: List[str] = Field(default_factory=list)
-    figure_paths: List[str] = Field(default_factory=list)
+    summary: NormalizedStr = Field(description="Result summary")
+    data_paths: NormalizedStrList = Field(default_factory=list)
+    figure_paths: NormalizedStrList = Field(default_factory=list)
     metrics: Dict[str, float] = Field(default_factory=dict)
-    analysis: str = Field(default="")
+    analysis: NormalizedStr = Field(default="")
 
     def to_markdown(self) -> str:
         """Export to markdown format"""
@@ -197,13 +274,13 @@ class ExperimentResult(BaseModel):
 
 class ReviewReport(BaseModel):
     """ICML-style review report"""
-    summary: str = Field(description="Review summary")
-    strengths: List[str] = Field(default_factory=list)
-    weaknesses: List[str] = Field(default_factory=list)
-    questions: List[str] = Field(default_factory=list)
+    summary: NormalizedStr = Field(description="Review summary")
+    strengths: NormalizedStrList = Field(default_factory=list)
+    weaknesses: NormalizedStrList = Field(default_factory=list)
+    questions: NormalizedStrList = Field(default_factory=list)
     score: int = Field(ge=1, le=10, description="Overall score (1-10)")
     confidence: int = Field(ge=1, le=5, description="Reviewer confidence (1-5)")
-    recommendation: str = Field(description="Accept/Reject/Revise")
+    recommendation: NormalizedStr = Field(description="Accept/Reject/Revise")
 
     def to_markdown(self) -> str:
         """Export to markdown format (ICML style)"""
@@ -237,9 +314,9 @@ class ReviewReport(BaseModel):
 
 class LiteratureItem(BaseModel):
     """Single literature item"""
-    title: str
-    authors: List[str] = Field(default_factory=list)
-    abstract: str = Field(default="")
+    title: NormalizedStr
+    authors: NormalizedStrList = Field(default_factory=list)
+    abstract: NormalizedStr = Field(default="")
     url: Optional[str] = None
     year: Optional[int] = None
 
@@ -247,7 +324,7 @@ class LiteratureItem(BaseModel):
 class LiteratureReview(BaseModel):
     """Literature review collection"""
     items: List[LiteratureItem] = Field(default_factory=list)
-    synthesis: str = Field(default="", description="Synthesized review")
+    synthesis: NormalizedStr = Field(default="", description="Synthesized review")
 
     def to_markdown(self) -> str:
         """Export to markdown format"""

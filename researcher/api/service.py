@@ -122,6 +122,29 @@ class APIProjectService:
             raise FileNotFoundError(f"session.json not found in {workspace_dir}")
         return session
 
+    def _is_project_run_active(self, project_id: str) -> bool:
+        lock = self._project_locks.get(project_id)
+        return bool(lock and lock.locked())
+
+    def _reconcile_project_session(self, project_id: str, workspace_dir: Path, session: Dict[str, Any]) -> Dict[str, Any]:
+        if str(session.get("status") or "").strip().lower() != "running":
+            return session
+        if self._is_project_run_active(project_id):
+            return session
+
+        stage = str(session.get("stage") or "unknown").strip() or "unknown"
+        patched = self._patch_project_session(
+            workspace_dir,
+            {
+                "status": "interrupted",
+                "stage": stage,
+                "sub_stage": None,
+                "updated_at": datetime.now().isoformat(),
+                "completed_at": session.get("completed_at") or datetime.now().isoformat(),
+            },
+        )
+        return patched
+
     def _patch_project_session(self, workspace_dir: Path, patch: Dict[str, Any]) -> Dict[str, Any]:
         # Always patch against the latest on-disk session to avoid stale-object overwrite.
         session = load_session_metadata(workspace_dir) or {}
@@ -303,7 +326,11 @@ class APIProjectService:
 
     def get_project_status(self, project_id: str) -> ProjectStatusResponse:
         workspace_dir = self._resolve_workspace(project_id)
-        session = self._load_project_session(workspace_dir)
+        session = self._reconcile_project_session(
+            project_id,
+            workspace_dir,
+            self._load_project_session(workspace_dir),
+        )
         return ProjectStatusResponse(
             project_id=project_id,
             project_name=session.get("project_name", "unknown"),
@@ -312,6 +339,7 @@ class APIProjectService:
             sub_stage=session.get("sub_stage"),
             run_mode=session.get("run_mode", "step"),
             workspace_dir=str(workspace_dir),
+            input_text=session.get("input_text"),
             updated_at=session.get("updated_at"),
         )
 
@@ -337,7 +365,11 @@ class APIProjectService:
             workspace_dir = Path(raw_path)
             if not workspace_dir.exists():
                 continue
-            session = load_session_metadata(workspace_dir) or {}
+            session = self._reconcile_project_session(
+                project_id,
+                workspace_dir,
+                load_session_metadata(workspace_dir) or {},
+            )
             projects.append(
                 ProjectStatusResponse(
                     project_id=str(session.get("project_id") or project_id),
@@ -347,6 +379,7 @@ class APIProjectService:
                     sub_stage=session.get("sub_stage"),
                     run_mode=session.get("run_mode", "step"),
                     workspace_dir=str(workspace_dir),
+                    input_text=session.get("input_text"),
                     updated_at=session.get("updated_at"),
                 )
             )
@@ -372,9 +405,9 @@ class APIProjectService:
             run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             run_mode = request.mode or session.get("run_mode") or "step"
             start_node = request.start_node or "task_parsing"
-            input_text = request.input_text or session.get("input_text")
-            if not input_text:
-                raise ValueError("input_text is required")
+            input_text = request.input_text if request.input_text is not None else session.get("input_text")
+            if input_text is None:
+                input_text = ""
             config = deepcopy(session.get("config") or load_global_config())
 
             session["status"] = "running"
@@ -673,7 +706,11 @@ class APIProjectService:
 
     def latest_node_result(self, project_id: str, node_name: str) -> NodeResult:
         workspace_dir = self._resolve_workspace(project_id)
-        session = load_session_metadata(workspace_dir) or {}
+        session = self._reconcile_project_session(
+            project_id,
+            workspace_dir,
+            load_session_metadata(workspace_dir) or {},
+        )
 
         if (
             session.get("status") == "running"

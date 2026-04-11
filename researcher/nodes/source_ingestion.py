@@ -13,6 +13,7 @@ Output:
 from __future__ import annotations
 
 import csv
+from functools import partial
 import hashlib
 import json
 import os
@@ -39,9 +40,11 @@ from researcher.utils import (
     get_relative_path,
     load_artifact_from_file,
     load_markdown,
+    publish_event_progress,
     resolve_workspace_path,
     rewrite_markdown_paths,
     run_jobs_in_parallel,
+    set_node_sub_stage,
     log_stage,
     save_json,
     save_markdown,
@@ -51,8 +54,19 @@ from researcher.utils import (
 def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
     log_stage(workspace_dir, "source_ingestion", "Starting source ingestion")
+    publish_progress = partial(
+        publish_event_progress,
+        state,
+    )
 
     try:
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "collecting_sources",
+            state=state,
+            progress_event="collecting_sources_started",
+        )
         config = state["config"]["researcher"]["source_ingestion"]
         max_items = config["max_items"]
         max_files_per_item = config["max_files_per_item"]
@@ -100,6 +114,12 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
             )
 
         source_annotations = _load_source_annotations(input_dir=input_dir, workspace_dir=workspace_dir)
+        publish_progress(
+            "collecting_sources_completed",
+            sub_stage="collecting_sources",
+            total_sources=len(sources),
+            annotated_sources=len(source_annotations),
+        )
 
         knowledge_dir = workspace_dir / "knowledge"
         bundles_root = knowledge_dir / "sources"
@@ -110,8 +130,23 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         task_context = load_artifact_from_file(workspace_dir, "input") or ""
 
         # resolve and prepare each source
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "preparing_sources",
+            state=state,
+            progress_event="preparing_sources_started",
+            total_sources=len(sources),
+        )
         metadata_items: List[Dict[str, Any]] = []
         for idx, source in enumerate(sources, start=1):
+            publish_progress(
+                "source_preparation_started",
+                sub_stage="preparing_sources",
+                current_index=idx,
+                total_sources=len(sources),
+                source_input=source,
+            )
             item_id = _safe_item_id(idx, source)
             bundle_dir = bundles_root / item_id
             item_meta: Dict[str, Any] = {
@@ -161,19 +196,51 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
                 item_meta.update(prepared)
                 item_meta["status"] = "prepared"
                 log_stage(workspace_dir, "source_ingestion", f"Prepared source {idx}/{len(sources)}: {source}")
+                publish_progress(
+                    "source_prepared",
+                    sub_stage="preparing_sources",
+                    current_index=idx,
+                    total_sources=len(sources),
+                    item_id=item_id,
+                    source_input=source,
+                )
             except Exception as item_error:
                 item_meta["errors"].append(str(item_error))
                 item_meta["parse_status"] = "failed"
                 item_meta["blog_status"] = "failed"
                 log_stage(workspace_dir, "source_ingestion", f"Source failed ({source}): {item_error}")
+                publish_progress(
+                    "source_failed",
+                    sub_stage="preparing_sources",
+                    current_index=idx,
+                    total_sources=len(sources),
+                    item_id=item_id,
+                    source_input=source,
+                    error=str(item_error),
+                )
 
             metadata_items.append(item_meta)
 
         prepared_items = [item for item in metadata_items if item.get("status") == "prepared"]
+        publish_progress(
+            "preparing_sources_completed",
+            sub_stage="preparing_sources",
+            total_sources=len(sources),
+            prepared_sources=len(prepared_items),
+            failed_sources=len(metadata_items) - len(prepared_items),
+        )
         if not prepared_items:
             raise WorkflowError("All source items failed during source ingestion")
 
         # build blogs in parallel
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "blog_generating",
+            state=state,
+            progress_event="blog_generating_started",
+            prepared_sources=len(prepared_items),
+        )
         log_stage(workspace_dir, "source_ingestion", f"Generating blogs for {len(prepared_items)} prepared sources")
         blog_jobs = [
             {
@@ -192,6 +259,11 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
             ),
             max_workers=len(blog_jobs),
             progress_desc="Building source blogs",
+        )
+        publish_progress(
+            "blog_generating_completed",
+            sub_stage="blog_generating",
+            prepared_sources=len(prepared_items),
         )
 
         for idx, item in enumerate(prepared_items):
@@ -212,6 +284,14 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         )
 
         # summarizer
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "knowledge_summarizing",
+            state=state,
+            progress_event="knowledge_summarizing_started",
+            prepared_sources=len(prepared_items),
+        )
         knowledge_prompt = SOURCE_KNOWLEDGE_SYNTHESIS_PROMPT.format(
             task=task_context,
             blogs_text="\n\n---\n\n".join(blog_blocks),
@@ -245,8 +325,23 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         save_json(metadata, metadata_path)
         save_markdown(knowledge_content, knowledge_path)
         log_stage(workspace_dir, "source_ingestion", f"Wrote knowledge synthesis: {knowledge_path}")
+        publish_progress(
+            "knowledge_summarizing_completed",
+            sub_stage="knowledge_summarizing",
+            metadata_path=get_relative_path(metadata_path, workspace_dir),
+            knowledge_path=get_relative_path(knowledge_path, workspace_dir),
+        )
 
         log_stage(workspace_dir, "source_ingestion", f"Completed. success={success_count}, failed={failed_count}")
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "completed",
+            state=state,
+            progress_event="completed",
+            successful=success_count,
+            failed=failed_count,
+        )
 
         update_state = {
             "stage": "source_ingestion",
@@ -262,6 +357,14 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         return update_state
 
     except Exception as e:
+        set_node_sub_stage(
+            workspace_dir,
+            "source_ingestion",
+            "failed",
+            state=state,
+            progress_event="failed",
+            error=str(e),
+        )
         log_stage(workspace_dir, "source_ingestion", f"Error: {str(e)}")
         raise WorkflowError(f"Source ingestion failed: {str(e)}")
 

@@ -96,6 +96,7 @@ class ProjectStatusResponse(BaseModel):
     sub_stage: Optional[str] = None
     run_mode: str
     workspace_dir: str
+    input_text: Optional[str] = None
     updated_at: Optional[str] = None
 
 

@@ -18,7 +18,9 @@ from autogen.events.agent_events import (
     TerminationEvent, 
     RunCompletionEvent, 
     ErrorEvent, 
-    ExecutedFunctionEvent, ExecuteFunctionEvent)
+    ExecutedFunctionEvent,
+    ExecuteFunctionEvent
+)
 from autogen.agentchat import run_group_chat_iter
 
 from researcher.state import ResearchState
@@ -65,6 +67,7 @@ def run_jobs_in_parallel(
     worker: Callable[[Dict[str, Any]], Any],
     max_workers: Optional[int] = None,
     progress_desc: Optional[str] = None,
+    progress_callback: Optional[Callable[[int, int, Any, Any], None]] = None,
 ) -> Dict[Any, Any]:
     """Run keyed jobs in parallel and collect their results."""
     if not jobs:
@@ -87,7 +90,10 @@ def run_jobs_in_parallel(
 
         for future in completed:
             key = futures[future]
-            results[key] = future.result()
+            result = future.result()
+            results[key] = result
+            if progress_callback:
+                progress_callback(len(results), len(futures), key, result)
 
     return results
 
@@ -471,126 +477,32 @@ def load_session_metadata(workspace_dir: Path) -> Optional[Dict[str, Any]]:
     return load_json(session_file)
 
 
-def deduplicate_long_repeats(sender, message, recipient, silent):
-    """Hook function for process_message_before_send to deduplicate long repeats in messages.
+def set_node_sub_stage(
+    workspace_dir: Path,
+    node_name: str,
+    sub_stage: str | None,
+    *,
+    state: Optional[ResearchState] = None,
+    progress_event: Optional[str] = None,
+    **extra: Any,
+) -> None:
+    """Persist node sub-stage and optionally publish a matching progress event."""
+    session = load_session_metadata(workspace_dir) or {}
+    session["stage"] = str(node_name or "").strip() or session.get("stage")
+    session["sub_stage"] = sub_stage
+    session["updated_at"] = datetime.now().isoformat()
+    save_session_metadata(workspace_dir, session)
+    if state is not None and progress_event:
+        runtime_state = dict(state)
+        runtime_state["stage"] = node_name
+        runtime_state["start_node"] = node_name
+        publish_event_progress(
+            runtime_state,
+            progress_event,
+            sub_stage=sub_stage,
+            **extra,
+        )
 
-    Detects and removes duplicate content blocks in individual messages before sending.
-    Uses line normalization (digits→placeholder, collapse whitespace) and pattern matching
-    to identify exact duplicates and repetitive pattern blocks within a single message.
-
-    For LSH/near-duplicate detection at scale, consider datasketch.MinHashLSH.
-
-    Args:
-        sender: The sending ConversableAgent
-        message: The message being sent (str or dict)
-        recipient: The recipient Agent
-        silent: Whether the message is silent
-
-    Returns:
-        The processed message (str or dict) with duplicate blocks replaced by summary placeholders
-    """
-    from autogen import ConversableAgent, Agent
-    from typing import Union, Dict, Any
-
-    # Extract content from message
-    if isinstance(message, dict):
-        content = message.get("content", "")
-        if not isinstance(content, str):
-            return message
-    else:
-        content = str(message)
-
-    if not content:
-        return message
-
-    def _norm(line: str) -> str:
-        """Normalize line: collapse whitespace and replace digits with placeholder"""
-        s = re.sub(r"\s+", " ", line.strip())
-        if not s:
-            return ""
-
-        normalized = re.sub(r"\d+", "0", s)
-
-        if "Loading" in normalized and ("|" in normalized or "%" in normalized):
-            # "Loading weights: 99%|█████████▊| 393/398 [00:00<00:00, 6747.06it/s, Materializing param=...]"
-            # -> "Loading weights: 0%|██████████| 0/0 [0:0<0:0, 0.0it/s, Materializing param=]"
-            normalized = re.sub(r'\d+%\|.*\| \d+/\d+ \[.*?\]', '0%|██████████| 0/0 [0:0<0:0, 0.0it/s', normalized)
-            normalized = re.sub(r'Materializing param=.*', 'Materializing param=', normalized)
-
-        # File paths pattern
-        elif "/" in normalized or "\\" in normalized:
-            # For paths, keep only the general structure
-            parts = re.split(r"[\/\\]", normalized)
-            for i, part in enumerate(parts):
-                if "." in part and any(ext in part for ext in [".jpg", ".png", ".json", ".py", ".txt", ".md", ".wav"]):
-                    parts[i] = "file.0"
-                elif part.replace("0", "").replace(".", "").replace("-", "").replace("_", "") == "":
-                    parts[i] = "0"
-                elif "_" in part and any(x in part for x in ["coco", "hateful_memes", "mimic_cxr"]):
-                    dataset_match = re.search(r'(coco|hateful_memes|mimic_cxr)_(\d+)', part)
-                    if dataset_match:
-                        parts[i] = f"{dataset_match.group(1)}_0"
-            normalized = "/".join(parts)
-
-        return normalized
-
-    lines = content.split("\n")
-
-    # First pass: normalize all lines and identify frequent patterns
-    normalized_lines = [_norm(line) for line in lines]
-    pattern_counts = Counter(normalized_lines)
-
-    # Find patterns that appear frequently
-    frequent_patterns = {pattern: count for pattern, count in pattern_counts.items() if count > 5}
-
-    if frequent_patterns:
-        result: list[str] = []
-        i = 0
-
-        while i < len(lines):
-            if not lines[i].strip():
-                result.append(lines[i])
-                i += 1
-                continue
-
-            current_norm = normalized_lines[i]
-
-            # Check if this line matches a frequent pattern
-            if current_norm in frequent_patterns:
-                start = i
-                pattern = current_norm
-                i += 1
-                while i < len(lines) and normalized_lines[i] == pattern:
-                    i += 1
-
-                block_size = i - start
-                if block_size >= 5:  # Only compress if we have 5+ consecutive similar lines
-                    sample_lines = [lines[j].strip() for j in range(start, min(start + 3, i))]
-                    sample_text = " | ".join(sample_lines[:2])  # Show first 2 samples
-                    if len(sample_lines) > 2:
-                        sample_text += " | ..."
-
-                    result.append(f"[Compressed {block_size} similar file paths: {sample_text}]")
-                    continue
-
-            result.append(lines[i])
-            i += 1
-    else:
-        # No frequent patterns, keep original content
-        result = lines
-
-    new_text = "\n".join(result)
-
-    # Return the modified message
-    if isinstance(message, dict):
-        if new_text != content:
-            modified_message = dict(message)
-            modified_message["content"] = new_text
-            return modified_message
-        else:
-            return message
-    else:
-        return new_text
 
 def iterable_group_chat(
     state: ResearchState,
@@ -599,7 +511,7 @@ def iterable_group_chat(
     pattern = None,
     prompt: str = None,   
 ):
-    _publish_event_progress(
+    publish_event_progress(
         state,
         "iterator_started",
         max_rounds=max_rounds,
@@ -621,7 +533,7 @@ def iterable_group_chat(
             print(f"\n{'─' * 60}")
             print(f"🎭 [{step}] {speaker}'s turn")
             print('─' * 60)
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "turn_started",
                 step=step,
@@ -635,7 +547,7 @@ def iterable_group_chat(
                 "name": sender,
                 "content": content
             })
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "message",
                 step=step,
@@ -665,7 +577,7 @@ def iterable_group_chat(
         elif isinstance(event, InputRequestEvent):
             prompt_text = str(event.content.prompt)
             request_id = str(uuid.uuid4())
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "input_requested",
                 step=step,
@@ -678,7 +590,7 @@ def iterable_group_chat(
             # 2. input from cli
             # user_input = input(prompt_text)
             event.content.respond(user_input)
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "input_submitted",
                 step=step,
@@ -686,7 +598,7 @@ def iterable_group_chat(
                 #user_input=user_input
             )
         elif isinstance(event, TerminationEvent):
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "termination",
                 step=step,
@@ -697,7 +609,7 @@ def iterable_group_chat(
             summary = event.content.summary
             context_vars = event.content.context_variables
             last_speaker = event.content.last_speaker
-            _publish_event_progress(
+            publish_event_progress(
                 state,
                 "run_completion",
                 step=step,
@@ -717,9 +629,10 @@ def iterable_group_chat(
 
     return result, context, None
 
-def _publish_event_progress(
+def publish_event_progress(
     state: ResearchState,
     progress_event: str,
+    sub_stage: str | None = None,
     **extra: Any,
 ) -> None:
     """Publish per-iteration progress when API runtime is active."""
@@ -747,6 +660,7 @@ def _publish_event_progress(
         "project_id": project_id,
         "node": node,
         "stage": stage,
+        "sub_stage": sub_stage,
         "progress_event": progress_event,
         "timestamp": datetime.now().isoformat(),
     }

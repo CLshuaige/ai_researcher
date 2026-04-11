@@ -35,7 +35,6 @@ from researcher.utils import (
     get_llm_config,
     get_default_config_path,
     save_agent_history,
-    deduplicate_long_repeats,
     save_json,
     load_json,
     iterable_group_chat
