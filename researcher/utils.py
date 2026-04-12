@@ -27,7 +27,7 @@ from researcher.state import ResearchState
 from researcher.schemas import ChatResult
 
 #from researcher.config import config
-from researcher.exceptions import WorkflowError
+from researcher.exceptions import WorkflowError, RunCancelledError
 from researcher.latex.utils import compile_latex
 
 
@@ -504,6 +504,38 @@ def set_node_sub_stage(
         )
 
 
+def _get_runtime_project_service():
+    app_module = sys.modules.get("researcher.api.app")
+    if app_module is None:
+        return None
+
+    fastapi_app = getattr(app_module, "app", None)
+    service = None
+    if fastapi_app is not None:
+        service = getattr(getattr(fastapi_app, "state", None), "project_service", None)
+    if service is None:
+        service = getattr(app_module, "service", None)
+    return service
+
+
+def is_run_cancel_requested(state: ResearchState) -> bool:
+    run_id = str(state.get("run_id") or "").strip()
+    if not run_id:
+        return False
+    service = _get_runtime_project_service()
+    if service is None:
+        return False
+    try:
+        return bool(service.is_run_cancel_requested(run_id))
+    except Exception:
+        return False
+
+
+def raise_if_run_cancel_requested(state: ResearchState, detail: str = "Run cancelled by user") -> None:
+    if is_run_cancel_requested(state):
+        raise RunCancelledError(detail)
+
+
 def iterable_group_chat(
     state: ResearchState,
     max_rounds: int = 10,
@@ -511,6 +543,7 @@ def iterable_group_chat(
     pattern = None,
     prompt: str = None,   
 ):
+    raise_if_run_cancel_requested(state)
     publish_event_progress(
         state,
         "iterator_started",
@@ -527,6 +560,7 @@ def iterable_group_chat(
 
     global_history = []
     for step, event in enumerate(iterator, start=1):
+        raise_if_run_cancel_requested(state)
         #print(event)
         if isinstance(event, GroupChatRunChatEvent):
             speaker = str(event.content.speaker)
@@ -586,7 +620,7 @@ def iterable_group_chat(
             )
             # api call
             # 1. wait for client input
-            user_input = _wait_for_user_input(request_id)
+            user_input = _wait_for_user_input(state, request_id)
             # 2. input from cli
             # user_input = input(prompt_text)
             event.content.respond(user_input)
@@ -627,6 +661,7 @@ def iterable_group_chat(
     print(f"📊 Context variables: {list(context.keys()) if context else 'None'}")
     print('=' * 60)
 
+    raise_if_run_cancel_requested(state)
     return result, context, None
 
 def publish_event_progress(
@@ -672,7 +707,7 @@ def publish_event_progress(
         # Progress publishing must not break workflow execution.
         pass
 
-def _wait_for_user_input(request_id: str):
+def _wait_for_user_input(state: ResearchState, request_id: str):
 
     app_module = sys.modules.get("researcher.api.app")
 
@@ -683,7 +718,13 @@ def _wait_for_user_input(request_id: str):
 
     input_store.create(request_id)
 
-    user_input = input_store.wait_for_input(request_id)
+    try:
+        user_input = input_store.wait_for_input(
+            request_id,
+            cancel_check=lambda: is_run_cancel_requested(state),
+        )
+    except InterruptedError as exc:
+        raise RunCancelledError("Run cancelled while waiting for user input") from exc
 
     return user_input
 

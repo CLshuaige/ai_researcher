@@ -24,6 +24,7 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
+    raise_if_run_cancel_requested,
     iterable_group_chat
 )
 from researcher.prompts.templates import METHOD_PROPOSAL_PROMPT, METHOD_FORMATTER_PROMPT
@@ -33,6 +34,7 @@ from researcher.exceptions import WorkflowError
 def method_design_node(state: ResearchState) -> Dict[str, Any]:
     """Design experimental method through multi-agent debate"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "method_design", "Starting method design")
 
     try:

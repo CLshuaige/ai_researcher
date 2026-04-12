@@ -24,6 +24,7 @@ from researcher.utils import (
     get_llm_config,
     parse_json_from_response,
     save_agent_history,
+    raise_if_run_cancel_requested,
     iterable_group_chat
 )
 from researcher.prompts.templates import IDEA_PROPOSAL_PROMPT, IDEA_FORMATTER_PROMPT
@@ -33,6 +34,7 @@ from researcher.exceptions import WorkflowError
 def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
     """Construct research hypothesis through multi-agent debate"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "hypothesis_construction", "Starting hypothesis construction")
 
     try:

@@ -87,6 +87,7 @@ API endpoints:
 - `GET /api/v1/projects/{project_id}/logs?tail_lines=200`: logs.
 - `WS /api/v1/projects/{project_id}/events`: realtime events.
 - `POST /api/v1/projects/{project_id}/input`: user input request.
+- `POST /api/v1/runs/{run_id}/cancel`: stop running process.
 
 ### Local Files Upload for Source Ingestion
 

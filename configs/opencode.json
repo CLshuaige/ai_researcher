@@ -4,19 +4,19 @@
     "port": 4096,
     "hostname": "172.22.162.99"
   },
-  "model": "openai-local/gpt-5.3-codex",
+  "model": "openai-local/gpt-5.4",
   "provider": {
     "openai-local": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenAI-local",
       "options": {
-        "baseURL": "https://sub.jlypx.de/v1",
-        "apiKey": "sk-8f6eb617e0b68f2761dd52715945ff6e0acbfac110d051e4c719c690a7762a27",
+        "baseURL": "https://free.glen.cc.cd/v1",
+        "apiKey": "sk-397605682670706462652b2aa0233883d20b1fbf436600413cfa2a5b0d1256ef",
         "wire_api": "responses"
       },
       "models": {
-        "gpt-5.3-codex": {
-          "name": "gpt-5.3-codex",
+        "gpt-5.4": {
+          "name": "gpt-5.4",
           "options": {
             "reasoningEffort": "high"
           },
@@ -32,12 +32,12 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "Qwen Local",
       "options": {
-        "baseURL": "http://localhost:8008/v1",
+        "baseURL": "http://localhost:8001/v1",
         "apiKey": "EMPTY"
       },
       "models": {
-        "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Coder-30B-A3B-Instruct": {
-          "name": "Qwen3-Coder-30B-A3B-Instruct"
+        "/home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Next-80B-A3B-Instruct": {
+          "name": "Qwen3-Next-80B-A3B-Instruct"
         }
       }
     },

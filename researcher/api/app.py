@@ -27,6 +27,7 @@ from researcher.api.schemas import (
     ProjectStatusResponse,
     RunRequest,
     RunResponse,
+    RunCancelResponse,
     UserInputRequest,
 )
 from researcher.api.service import APIProjectService
@@ -38,6 +39,7 @@ input_store = InputResponseStore()
 service = APIProjectService()
 event_bus = ProjectEventBus()
 app.state.event_bus = event_bus
+app.state.project_service = service
 
 
 def _cleanup_file(path: str) -> None:
@@ -98,6 +100,16 @@ async def update_project_config(project_id: str, request: ConfigUpdateRequest) -
 async def run_project(project_id: str, request: RunRequest) -> RunResponse:
     try:
         return await run_in_threadpool(service.run_project, project_id, request, event_bus)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# api-6b
+@app.post("/api/v1/runs/{run_id}/cancel", response_model=RunCancelResponse)
+async def cancel_run(run_id: str) -> RunCancelResponse:
+    try:
+        return await run_in_threadpool(service.cancel_run, run_id, event_bus)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

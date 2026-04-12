@@ -31,6 +31,7 @@ from researcher.utils import (
     load_markdown,
     get_llm_config,
     save_agent_history,
+    raise_if_run_cancel_requested,
     iterable_group_chat,
 )
 from researcher.exceptions import WorkflowError
@@ -38,6 +39,7 @@ from researcher.exceptions import WorkflowError
 def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
     """Parse and clarify research task with optional human-in-the-loop"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "task_parsing", "Starting task parsing")
 
     try:

@@ -16,6 +16,7 @@ from researcher.utils import (
     load_artifact_from_file,
     get_llm_config,
     save_agent_history,
+    raise_if_run_cancel_requested,
     iterable_group_chat,
 )
 from researcher.prompts.templates import REVIEW_PROMPT
@@ -25,6 +26,7 @@ from researcher.exceptions import WorkflowError
 def review_node(state: ResearchState) -> Dict[str, Any]:
     """Review research report"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "review", "Starting review")
 
     try:

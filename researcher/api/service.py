@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 import base64
@@ -15,6 +15,7 @@ import zipfile
 from pydantic import BaseModel
 
 from researcher.researcher import AIResearcher
+from researcher.exceptions import RunCancelledError
 from researcher.utils import (
     get_project_root,
     load_global_config,
@@ -48,6 +49,7 @@ from researcher.api.schemas import (
     ProjectStatusResponse,
     RunRequest,
     RunResponse,
+    RunCancelResponse,
 )
 
 
@@ -71,12 +73,56 @@ class APIProjectService:
         self.index_path = self.base_dir / "index.json"
         self._project_locks: Dict[str, Lock] = {}
         self._locks_guard = Lock()
+        self._active_runs: Dict[str, Dict[str, Any]] = {}
+        self._active_runs_guard = Lock()
 
     def _get_project_lock(self, project_id: str) -> Lock:
         with self._locks_guard:
             if project_id not in self._project_locks:
                 self._project_locks[project_id] = Lock()
             return self._project_locks[project_id]
+
+    def _register_active_run(self, run_id: str, project_id: str) -> Event:
+        cancel_event = Event()
+        with self._active_runs_guard:
+            self._active_runs[run_id] = {
+                "project_id": project_id,
+                "cancel_event": cancel_event,
+            }
+        return cancel_event
+
+    def _clear_active_run(self, run_id: str) -> None:
+        with self._active_runs_guard:
+            self._active_runs.pop(run_id, None)
+
+    def is_run_cancel_requested(self, run_id: str) -> bool:
+        with self._active_runs_guard:
+            record = self._active_runs.get(run_id)
+            if not record:
+                return False
+            return bool(record["cancel_event"].is_set())
+
+    def cancel_run(self, run_id: str, event_bus: ProjectEventBus) -> RunCancelResponse:
+        with self._active_runs_guard:
+            record = self._active_runs.get(run_id)
+            if not record:
+                raise FileNotFoundError(f"Unknown active run_id: {run_id}")
+            project_id = str(record["project_id"])
+            cancel_event: Event = record["cancel_event"]
+            cancel_event.set()
+
+        event_bus.publish(project_id, {
+            "event": "run_cancel_requested",
+            "project_id": project_id,
+            "run_id": run_id,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+        return RunCancelResponse(
+            project_id=project_id,
+            run_id=run_id,
+            status="cancelling",
+        )
 
     def _safe_slug(self, text: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
@@ -340,6 +386,7 @@ class APIProjectService:
             run_mode=session.get("run_mode", "step"),
             workspace_dir=str(workspace_dir),
             input_text=session.get("input_text"),
+            last_run_id=session.get("last_run_id"),
             updated_at=session.get("updated_at"),
         )
 
@@ -380,6 +427,7 @@ class APIProjectService:
                     run_mode=session.get("run_mode", "step"),
                     workspace_dir=str(workspace_dir),
                     input_text=session.get("input_text"),
+                    last_run_id=session.get("last_run_id"),
                     updated_at=session.get("updated_at"),
                 )
             )
@@ -408,6 +456,7 @@ class APIProjectService:
             input_text = request.input_text if request.input_text is not None else session.get("input_text")
             if input_text is None:
                 input_text = ""
+            input_text = str(input_text)
             config = deepcopy(session.get("config") or load_global_config())
 
             session["status"] = "running"
@@ -416,7 +465,9 @@ class APIProjectService:
             session["run_mode"] = run_mode
             session["updated_at"] = datetime.now().isoformat()
             session["last_run_id"] = run_id
-            session["input_text"] = input_text
+            if start_node == "task_parsing":
+                session["input_text"] = input_text
+            cancel_event = self._register_active_run(run_id, project_id)
             self._patch_project_session(
                 workspace_dir,
                 {
@@ -465,12 +516,57 @@ class APIProjectService:
             try:
                 final_state = researcher.run(
                     input_text=input_text,
+                    run_id=run_id,
+                    cancel_event=cancel_event,
                     start_node=start_node,
                     config=config,
                     mode=run_mode,
                     post_config=request.post_config,
                     event_callback=_on_event,
                 )
+            except RunCancelledError as e:
+                latest_session = load_session_metadata(workspace_dir) or session
+                interrupted_stage = str(latest_session.get("stage") or start_node or "unknown")
+                interrupted_sub_stage = latest_session.get("sub_stage")
+                interrupted_at = datetime.now().isoformat()
+                self._patch_project_session(
+                    workspace_dir,
+                    {
+                        "status": "interrupted",
+                        "stage": interrupted_stage,
+                        "sub_stage": interrupted_sub_stage,
+                        "updated_at": interrupted_at,
+                        "completed_at": interrupted_at,
+                    },
+                )
+                event_bus.publish(project_id, {
+                    "event": "run_cancelled",
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "status": "interrupted",
+                    "stage": interrupted_stage,
+                    "sub_stage": interrupted_sub_stage,
+                    "detail": str(e),
+                    "timestamp": interrupted_at,
+                })
+                response = RunResponse(
+                    project_id=project_id,
+                    run_id=run_id,
+                    run_mode=run_mode,
+                    stage=interrupted_stage,
+                    status="interrupted",
+                    start_node=start_node,
+                    nodes=nodes,
+                    final_state={
+                        "stage": interrupted_stage,
+                        "sub_stage": interrupted_sub_stage,
+                        "error": str(e),
+                        "cancelled": True,
+                    },
+                )
+                run_path = workspace_dir / "runs" / f"{run_id}.json"
+                save_json(response.model_dump(), run_path)
+                return response
             except Exception:
                 self._patch_project_session(
                     workspace_dir,
@@ -487,6 +583,8 @@ class APIProjectService:
                     "timestamp": datetime.now().isoformat(),
                 })
                 raise
+            finally:
+                self._clear_active_run(run_id)
 
             status = "completed" if not final_state.get("error") else "failed"
             self._patch_project_session(

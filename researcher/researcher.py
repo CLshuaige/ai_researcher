@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 from typing import Optional, Callable, Any, Dict
 from datetime import datetime
 from copy import deepcopy
@@ -72,6 +73,8 @@ class AIResearcher:
         self,
         input_text: str,
         input_file: Optional[Path] = None,
+        run_id: Optional[str] = None,
+        cancel_event: Optional[Event] = None,
         start_node: Optional[str] = None,
         config: dict = None,
         mode: Optional[str] = None,
@@ -99,7 +102,9 @@ class AIResearcher:
                 input_text = f.read()
 
         input_path = get_artifact_path(self.workspace_dir, "input")
-        save_markdown(input_text, input_path)
+        update_input_artifact = start_node == "task_parsing" or not input_path.exists()
+        if update_input_artifact:
+            save_markdown(input_text, input_path)
 
         # Generate session_id from workspace directory name
         self.session_id = self.workspace_dir.name
@@ -120,6 +125,7 @@ class AIResearcher:
             "post_config": post_config,
             "run_mode": run_mode,
             "project_id": project_id,
+            "run_id": run_id,
             "task": None,
             "literature": None,
             "idea": None,
@@ -134,6 +140,7 @@ class AIResearcher:
             "error": None,
             "session_id": self.session_id,
             "opencode": None,
+            "cancel_event": cancel_event,
         }
 
         # Save session metadata

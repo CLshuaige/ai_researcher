@@ -36,6 +36,7 @@ from researcher.utils import (
     save_agent_history,
     publish_event_progress,
     set_node_sub_stage,
+    raise_if_run_cancel_requested,
     iterable_group_chat,
     markdown_to_pdf,
     latex_to_pdf,
@@ -57,6 +58,7 @@ from researcher.integrations.literature_search import search_literature
 def literature_review_node(state: ResearchState) -> Dict[str, Any]:
     """Conduct literature review"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "literature_review", "Starting literature review")
 
     try:

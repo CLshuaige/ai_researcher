@@ -23,6 +23,11 @@ class WorkflowError(ResearcherError):
     pass
 
 
+class RunCancelledError(ResearcherError):
+    """Workflow run cancelled by user"""
+    pass
+
+
 class LLMError(ResearcherError):
     """LLM API errors"""
     pass

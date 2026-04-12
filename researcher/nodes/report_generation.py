@@ -29,6 +29,7 @@ from researcher.utils import (
     parse_json_from_response,
     save_agent_history,
     save_markdown,
+    raise_if_run_cancel_requested,
     iterable_group_chat
 )
 from researcher.prompts.paper_writing import (
@@ -51,6 +52,7 @@ from researcher.latex.presets import Journal, get_preset
 def report_generation_node(state: ResearchState) -> Dict[str, Any]:
     """Generate research paper with LaTeX structure"""
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
 
     try:
         # Load configuration

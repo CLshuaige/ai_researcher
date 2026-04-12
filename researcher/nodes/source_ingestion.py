@@ -41,6 +41,7 @@ from researcher.utils import (
     load_artifact_from_file,
     load_markdown,
     publish_event_progress,
+    raise_if_run_cancel_requested,
     resolve_workspace_path,
     rewrite_markdown_paths,
     run_jobs_in_parallel,
@@ -53,6 +54,7 @@ from researcher.utils import (
 
 def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     log_stage(workspace_dir, "source_ingestion", "Starting source ingestion")
     publish_progress = partial(
         publish_event_progress,
@@ -140,6 +142,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
         )
         metadata_items: List[Dict[str, Any]] = []
         for idx, source in enumerate(sources, start=1):
+            raise_if_run_cancel_requested(state)
             publish_progress(
                 "source_preparation_started",
                 sub_stage="preparing_sources",
@@ -242,6 +245,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
             prepared_sources=len(prepared_items),
         )
         log_stage(workspace_dir, "source_ingestion", f"Generating blogs for {len(prepared_items)} prepared sources")
+        raise_if_run_cancel_requested(state)
         blog_jobs = [
             {
                 "key": idx,
@@ -265,6 +269,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
             sub_stage="blog_generating",
             prepared_sources=len(prepared_items),
         )
+        raise_if_run_cancel_requested(state)
 
         for idx, item in enumerate(prepared_items):
             item["status"] = "completed"
@@ -296,6 +301,7 @@ def source_ingestion_node(state: ResearchState) -> Dict[str, Any]:
             task=task_context,
             blogs_text="\n\n---\n\n".join(blog_blocks),
         )
+        raise_if_run_cancel_requested(state)
         knowledge_body = _generate_markdown_with_agent(
             prompt=knowledge_prompt,
             llm_config=llm_config,

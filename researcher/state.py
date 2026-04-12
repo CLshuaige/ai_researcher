@@ -2,6 +2,7 @@
 
 from typing import TypedDict, Optional
 from pathlib import Path
+from typing import Any
 
 from researcher.schemas import (
     ResearchIdea,
@@ -25,6 +26,7 @@ class ResearchState(TypedDict):
     post_config: Optional[dict]
     run_mode: Optional[str]
     project_id: str
+    run_id: Optional[str]
 
     # Research artifacts (structured objects passed between nodes)
     task: Optional[str]
@@ -51,3 +53,4 @@ class ResearchState(TypedDict):
     # Session management
     session_id: str
     opencode: Optional[dict]
+    cancel_event: Optional[Any]

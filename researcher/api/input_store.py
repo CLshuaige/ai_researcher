@@ -1,4 +1,5 @@
 import threading
+import time
 from typing import Dict
 
 
@@ -28,22 +29,31 @@ class InputResponseStore:
 
         return True
 
-    def wait_for_input(self, request_id: str, timeout: int = 600):
+    def wait_for_input(self, request_id: str, timeout: int = 600, poll_interval: float = 1, cancel_check=None):
         with self.lock:
             fut = self.pending.get(request_id)
 
         if not fut:
             return None
 
-        ok = fut["event"].wait(timeout)
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with self.lock:
+                    self.pending.pop(request_id, None)
+                raise TimeoutError(f"user input timeout: {request_id}")
 
-        with self.lock:
-            self.pending.pop(request_id, None)
+            if cancel_check and cancel_check():
+                with self.lock:
+                    self.pending.pop(request_id, None)
+                raise InterruptedError(f"user input cancelled: {request_id}")
 
-        if not ok:
-            raise TimeoutError(f"user input timeout: {request_id}")
-
-        return fut["value"]
+            wait_time = min(poll_interval, remaining)
+            if fut["event"].wait(wait_time):
+                with self.lock:
+                    self.pending.pop(request_id, None)
+                return fut["value"]
 
     def pending_ids(self):
         with self.lock:

@@ -88,6 +88,12 @@ class RunResponse(BaseModel):
     final_state: Dict[str, Any] = Field(default_factory=dict) 
 
 
+class RunCancelResponse(BaseModel):
+    project_id: str
+    run_id: str
+    status: str
+
+
 class ProjectStatusResponse(BaseModel):
     project_id: str 
     project_name: str 
@@ -97,6 +103,7 @@ class ProjectStatusResponse(BaseModel):
     run_mode: str
     workspace_dir: str
     input_text: Optional[str] = None
+    last_run_id: Optional[str] = None
     updated_at: Optional[str] = None
 
 

@@ -37,6 +37,7 @@ from researcher.utils import (
     save_agent_history,
     save_json,
     load_json,
+    raise_if_run_cancel_requested,
     iterable_group_chat
 )
 from researcher.prompts.templates import (
@@ -93,6 +94,7 @@ def create_repair_engineer_agent(llm_config):
 
 def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
     workspace_dir = state["workspace_dir"]
+    raise_if_run_cancel_requested(state)
     config = state["config"]["researcher"]["experiment_execution"]
     backend = config["backend"]
     max_retries = config["code_execution_retries"]
@@ -129,9 +131,9 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
 
         if backend == "opencode":
             repo_root = Path(__file__).resolve().parents[2]
-            opencode_config = config.get("opencode") or {}
-            model_selector = opencode_config.get("model_selector")
-            provider_id, model_id = resolve_opencode_model_selector(model_selector)
+            # opencode_config = config.get("opencode") or {}
+            # model_selector = opencode_config.get("model_selector")
+            # provider_id, model_id = resolve_opencode_model_selector(model_selector)
             managed_opencode_runtime = _ManagedOpenCodeRuntime(
                 workspace_dir=exp_dir,
                 config_path=repo_root / "configs" / "opencode.json",
@@ -139,8 +141,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             runtime_info = managed_opencode_runtime.start()
             opencode_runtime = {
                 "base_url": runtime_info["base_url"],
-                "provider_id": provider_id,
-                "model_id": model_id,
+                # "provider_id": provider_id,
+                # "model_id": model_id,
                 "pid": runtime_info["pid"],
                 "log_path": runtime_info["log_path"],
             }
@@ -191,8 +193,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             "env_path": env_path,
             "session_id": None,
             "opencode_base_url": opencode_runtime.get("base_url"),
-            "opencode_provider_id": opencode_runtime.get("provider_id"),
-            "opencode_model_id": opencode_runtime.get("model_id"),
+            # "opencode_provider_id": opencode_runtime.get("provider_id"),
+            # "opencode_model_id": opencode_runtime.get("model_id"),
             # Three-role workflow state
             "workflow_phase": "instruction",  # instruction → validation → repair (loop)
             "instruction_plan": None,         # Instruction Engineer output
@@ -307,8 +309,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                     env_path=ctx["env_path"],
                     session_id=ctx["session_id"],
                     opencode_base_url=ctx["opencode_base_url"],
-                    provider_id=ctx["opencode_provider_id"],
-                    model_id=ctx["opencode_model_id"],
+                    # provider_id=ctx["opencode_provider_id"],
+                    # model_id=ctx["opencode_model_id"],
                 )
                 ctx["session_id"] = session_id
                 #print(f"Session ID: {session_id}, returned")
@@ -613,8 +615,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
             "stage": "experiment_execution",
             "opencode": {
                 "base_url": opencode_runtime.get("base_url"),
-                "provider_id": opencode_runtime.get("provider_id"),
-                "model_id": opencode_runtime.get("model_id"),
+                # "provider_id": opencode_runtime.get("provider_id"),
+                # "model_id": opencode_runtime.get("model_id"),
                 "session_id": context.get("session_id"),
             } if backend == "opencode" else None,
         }
@@ -622,6 +624,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         if state["config"]["researcher"]["workflow"] == "default":
             update_state["next_node"] = "report_generation"
         return update_state
+    
+    # Ensure that unexpected exits or interruptions do not result in the leakage of residual subprocess.
     finally:
         if managed_opencode_runtime is not None:
             managed_opencode_runtime.stop()
