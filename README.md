@@ -25,10 +25,17 @@ pip install -r requirements.txt
 ```
 
 ```bash
-#LaTex
-conda install anaconda::poppler      # pdftotext/pdfinfo                                                                                                              
-conda install conda-forge::chktex    # LaTeX语法检查                                                                                                                  
-sudo apt install texlive-latex-extra       # LaTeX编译环境
+# LaTeX
+conda install anaconda::poppler           # pdftotext/pdfinfo
+conda install conda-forge::chktex         # LaTeX语法检查
+sudo apt install texlive-latex-extra      # LaTeX编译环境
+```
+
+```bash
+# OpenCode for experiment_execution
+node --version                            # v16.0.0 or higher is needed
+npm install -g opencode-ai
+which opencode                            # check if it's available
 ```
 
 ## Configuration

@@ -640,7 +640,13 @@ class _ManagedOpenCodeRuntime:
     def __init__(self, workspace_dir: Path, config_path: Path):
         self.workspace_dir = workspace_dir
         self.config_path = config_path
-        self.host = "127.0.0.1"
+        server_config = {}
+        try:
+            config_data = load_json(config_path) or {}
+            server_config = config_data.get("server") or {}
+        except Exception:
+            server_config = {}
+        self.host = str(server_config.get("hostname", "127.0.0.1")).strip()
         # Create a temporary TCP socket and bind to port 0 so the OS picks a free port.
         # - `port=0`: request an ephemeral port from the kernel
         # - `getsockname()[1]`: read the assigned port from the socket address tuple
@@ -652,7 +658,7 @@ class _ManagedOpenCodeRuntime:
         #     # Allow quick reuse of the address/port to reduce TIME_WAIT binding issues.
         #     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         #     self.port = int(sock.getsockname()[1])
-        self.port = 4096
+        self.port = int(server_config.get("port") or 4096)
         # Base URL for subsequent clients (i.e., the OpenCode server).
         self.base_url = f"http://{self.host}:{self.port}"
         self.log_path = workspace_dir / "opencode_runtime.log"
