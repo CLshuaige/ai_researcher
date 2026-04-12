@@ -293,7 +293,7 @@ def get_artifact_path(workspace_dir: Path, artifact_name: str) -> Path:
         "idea": "idea.md",
         "method": "method.md",
         "results": "results.md",
-        "paper": "paper.pdf",
+        "paper": "paper.md",
         "referee": "referee.md"
     }
     return workspace_dir / artifact_map.get(artifact_name, f"{artifact_name}.md")

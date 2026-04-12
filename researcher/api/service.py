@@ -199,12 +199,18 @@ class APIProjectService:
         return session
 
     def _serialize(self, obj: Any) -> Any:
+        if isinstance(obj, Event):
+            return None
         if isinstance(obj, BaseModel):
             return obj.model_dump()
         if isinstance(obj, Path):
             return str(obj)
         if isinstance(obj, dict):
-            return {k: self._serialize(v) for k, v in obj.items()}
+            return {
+                k: self._serialize(v)
+                for k, v in obj.items()
+                if k != "cancel_event"
+            }
         if isinstance(obj, list):
             return [self._serialize(v) for v in obj]
         if isinstance(obj, tuple):
@@ -257,6 +263,8 @@ class APIProjectService:
             "method_design": ["method.md"],
             "experiment_execution": ["results.md"],
             "report_generation": [
+                "paper.md",
+                "paper.pdf",
                 "paper/output.md",
                 "paper/main.pdf",
                 "paper/main.tex",

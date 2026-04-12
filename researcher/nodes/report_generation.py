@@ -29,6 +29,7 @@ from researcher.utils import (
     parse_json_from_response,
     save_agent_history,
     save_markdown,
+    markdown_to_pdf,
     raise_if_run_cancel_requested,
     iterable_group_chat
 )
@@ -507,14 +508,17 @@ def report_generation_node(state: ResearchState) -> Dict[str, Any]:
             elif output_type == "markdown":
                 from ..latex.latex_to_markdown import parse_main_tex
                 paper_md_path = get_artifact_path(workspace_dir, "paper")
+                paper_pdf_path = paper_md_path.with_suffix(".pdf")
                 content_md = parse_main_tex(main_tex_path)
                 log_stage(workspace_dir, "report_generation", 
                          f"[✓] Markdown generated")
 
                 save_markdown(content_md, paper_md_path)
+                markdown_to_pdf(paper_md_path, paper_pdf_path, title=paper_meta.get("title") or "paper")
                 log_stage(workspace_dir, "report_generation", 
                          f"Markdown generated at: {paper_md_path}")
-                paper_dir = paper_md_path
+                log_stage(workspace_dir, "report_generation",
+                         f"PDF generated at: {paper_pdf_path}")
         except Exception as e:
             log_stage(workspace_dir, "report_generation", 
                      f"[!] Warning: Failed to compile final PDF: {str(e)}")
