@@ -62,4 +62,8 @@ Thumbs.db
 # Claude
 .claude/
 
+# .env
+.env.secrets
+
 opencode-sdk-python-next/
+

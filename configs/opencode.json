@@ -4,11 +4,7 @@
     "port": 4096,
     "hostname": "172.22.162.99"
   },
-<<<<<<< HEAD
   "model": "openai-local/gpt-5.4",
-=======
-  "model": "qwen-local//home/ai_researcher/.cache/modelscope/hub/models/Qwen/Qwen3-Next-80B-A3B-Instruct",
->>>>>>> 8d9470b (修改opencode配置)
   "provider": {
     "openai-local": {
       "npm": "@ai-sdk/openai-compatible",
