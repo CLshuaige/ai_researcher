@@ -11,7 +11,7 @@
       "name": "OpenAI-local",
       "options": {
         "baseURL": "https://free.glen.cc.cd/v1",
-        "apiKey": "sk-397605682670706462652b2aa0233883d20b1fbf436600413cfa2a5b0d1256ef",
+        "apiKeyEnv": "OPENAI_LOCAL_API_KEY",
         "wire_api": "responses"
       },
       "models": {
@@ -46,12 +46,26 @@
       "name": "kimi-code",
       "options": {
         "baseURL": "https://api.kimi.com/coding/v1",
-        "apiKey": "sk-kimi-B35uS7klu50K9y1S5wfMnIk69dUfa7zs9WOt4TsoRFHjNQiZ0WZwM6WkQQ0aHT4b",
+        "apiKeyEnv": "KIMI_CODE_API_KEY",
         "wire_api": "chat_completions"
       },
       "models": {
         "kimi-code": {
           "name": "kimi-for-coding"
+        }
+      }
+    },
+    "minimax": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "MiniMax",
+      "options": {
+        "baseURL": "https://api.minimaxi.com/v1",
+        "apiKeyEnv": "MINIMAX_API_KEY",
+        "wire_api": "chat_completions"
+      },
+      "models": {
+        "MiniMax-M2.7": {
+          "name": "MiniMax-M2.7"
         }
       }
     }

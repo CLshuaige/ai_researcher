@@ -14,6 +14,7 @@ import zipfile
 
 from pydantic import BaseModel
 
+from researcher.config import persist_config_secrets
 from researcher.researcher import AIResearcher
 from researcher.exceptions import RunCancelledError
 from researcher.utils import (
@@ -327,6 +328,7 @@ class APIProjectService:
         config.setdefault("llm_config", llm_config)
         config.setdefault("researcher", {})
         config["researcher"]["workflow"] = "default" if request.mode == "auto" else "step"
+        config = persist_config_secrets(config)
 
         session_data = {
             "session_id": project_id,
@@ -363,7 +365,8 @@ class APIProjectService:
         workspace_dir = self._resolve_workspace(project_id)
         session = self._load_project_session(workspace_dir)
         current_config = session.get("config") or {}
-        merged_config = merge_dict(current_config, request.config_patch)
+        sanitized_patch = persist_config_secrets(request.config_patch)
+        merged_config = merge_dict(current_config, sanitized_patch)
         self._patch_project_session(
             workspace_dir,
             {
@@ -374,7 +377,7 @@ class APIProjectService:
 
         return ConfigUpdateResponse(
             project_id=project_id,
-            applied_patch=request.config_patch,
+            applied_patch=sanitized_patch,
             researcher_config=merged_config.get("researcher", {}),
         )
 

@@ -4,17 +4,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from .opencode_executor import OpenCodeExecutor, opencode_codebase_experiment
+from researcher.config import resolve_config_secret_refs
 
 
 def _default_opencode_config_path() -> Path:
     return Path(__file__).resolve().parents[3] / "configs" / "opencode.json"
 
 
-def get_opencode_config(config_path: Path | None = None) -> Dict[str, Any]:
+def get_opencode_config(config_path: Path | None = None, *, resolve_secrets: bool = True) -> Dict[str, Any]:
     path = config_path or _default_opencode_config_path()
 
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+
+    if resolve_secrets and isinstance(config, dict):
+        return resolve_config_secret_refs(config)
+    return config
 
 
 def get_opencode_server_url() -> str:

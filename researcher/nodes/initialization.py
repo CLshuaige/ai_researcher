@@ -1,6 +1,7 @@
 from copy import deepcopy
 from typing import Dict, Any
 
+from researcher.config import resolve_config_secret_refs
 from researcher.state import ResearchState
 from researcher.utils import log_stage, merge_dict, set_llm_config_override
 
@@ -26,6 +27,7 @@ def init_node(state: ResearchState) -> Dict[str, Any]:
     post_config = state.get("post_config") or {}
     if post_config:
         config = merge_dict(config, post_config)
+    config = resolve_config_secret_refs(config)
 
     researcher_cfg = config.setdefault("researcher", {})
     workflow = researcher_cfg.get("workflow")

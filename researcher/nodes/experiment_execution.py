@@ -52,6 +52,7 @@ from researcher.prompts.templates import (
     REPAIR_ENGINEER_PROMPT,
 )
 from researcher.exceptions import WorkflowError
+from researcher.config import load_runtime_secret_values
 
 from researcher.integrations.opencode import (
     list_opencode_model_selectors,
@@ -109,6 +110,8 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         task_content = load_artifact_from_file(workspace_dir, "task")
         idea_content = load_artifact_from_file(workspace_dir, "idea")
         method_content = load_artifact_from_file(workspace_dir, "method")
+        knowledge_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        knowledge_prompt_text = knowledge_text or "No additional user-provided source knowledge available."
 
         steps, execution_order = parse_method_markdown(method_content)
         steps_dict = {s.step_id: s for s in steps}
@@ -236,6 +239,7 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
                 step=step,
                 step_results=ctx["step_results"],
                 exp_dir=ctx["experiment_dir"],
+                knowledge=knowledge_prompt_text,
             )
 
             return FunctionTargetResult(
@@ -525,11 +529,17 @@ def experiment_execution_node(state: ResearchState) -> Dict[str, Any]:
         context_prompt = EXPERIMENT_EXECUTION_CONTEXT_PROMPT.format(
             task=task_content,
             idea=extract_selected_idea(idea_content),
+            knowledge=knowledge_prompt_text,
         )
         #context_messages = TextMessage(content=context_prompt, source="user")
         # 2. First Step Prompt
         first_step = steps_dict[execution_order[ctx["current_index"]]]
-        first_step_prompt = parse_method_step_to_prompt(first_step, step_results=ctx["step_results"], exp_dir=exp_dir)
+        first_step_prompt = parse_method_step_to_prompt(
+            first_step,
+            step_results=ctx["step_results"],
+            exp_dir=exp_dir,
+            knowledge=knowledge_prompt_text,
+        )
         #first_step_messages = TextMessage(content=first_step_prompt, source="user")
 
         initial_messages = [
@@ -672,6 +682,7 @@ class _ManagedOpenCodeRuntime:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log_file = self.log_path.open("a", encoding="utf-8")
         env = os.environ.copy()
+        env.update(load_runtime_secret_values())
         env["OPENCODE_CONFIG"] = str(self.config_path)
         env["OPENCODE_HOST"] = self.host
         env["OPENCODE_PORT"] = str(self.port)
@@ -804,7 +815,7 @@ class _ManagedOpenCodeRuntime:
 
 # utils
 
-def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: Path) -> str:
+def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: Path, knowledge: str) -> str:
     # Collect file paths from previous steps
     available_files = []
     dep_summaries = []
@@ -827,7 +838,8 @@ def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: P
             description=step.description,
             expected_output=step.expected_output,
             context=context_str,
-            available_files=files_str
+            available_files=files_str,
+            knowledge=knowledge,
         )
     else:  # Engineer
         timestamp = exp_dir.name.replace("code_", "")
@@ -838,6 +850,7 @@ def parse_method_step_to_prompt(step: MethodStep, step_results: dict, exp_dir: P
             expected_output=step.expected_output,
             available_files=files_str,
             context=context_str,
+            knowledge=knowledge,
             step_dir=step_dir,
             timestamp=timestamp
         )

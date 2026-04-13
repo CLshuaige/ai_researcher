@@ -40,13 +40,20 @@ which opencode                            # check if it's available
 
 ## Configuration
 
-Copy `.env.example` to `.env` and configure:
+Current secret configuration is managed through `.env.secrets`.
+
+Notes:
+
+- `.env.secrets` is gitignored and is the runtime secret store used by the app.
+- For project config submitted from the web/API, the frontend sends raw `api_key` when the user enters a new secret. The backend stores that secret in `.env.secrets` and saves only the corresponding `api_key_env` reference in project config.
+- For later edits, the frontend keeps using that saved `api_key_env` reference unless the user replaces the secret.
+- `configs/opencode.json` is a separate OpenCode config file and follows OpenCode's own field naming, it uses `apiKeyEnv: "OPENAI_LOCAL_API_KEY"`.
+
+Typical setup:
 
 ```bash
-cp .env.example .env
+echo 'OPENAI_LOCAL_API_KEY=your_key_here' >> .env.secrets
 ```
-
-Edit `.env` with your API keys and preferences.
 
 ## Usage
 

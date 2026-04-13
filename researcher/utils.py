@@ -23,6 +23,7 @@ from autogen.events.agent_events import (
 )
 from autogen.agentchat import run_group_chat_iter
 
+from researcher.config import resolve_config_secret_refs
 from researcher.state import ResearchState
 from researcher.schemas import ChatResult
 
@@ -289,6 +290,7 @@ def get_artifact_path(workspace_dir: Path, artifact_name: str) -> Path:
     artifact_map = {
         "input": "input.md",
         "task": "task.md",
+        "knowledge": "knowledge/knowledge.md",
         "literature": "literature.md",
         "idea": "idea.md",
         "method": "method.md",
@@ -341,6 +343,9 @@ def get_llm_config(config_path: Optional[Path] = None, use_tool: bool = False, s
                 config_data = json.load(f)
         else:
             raise WorkflowError(f"LLM config file not found: {config_path}")
+
+    if isinstance(config_data, dict):
+        config_data = resolve_config_secret_refs(config_data)
 
     if use_tool:
         for config in config_data["config_list"]:
