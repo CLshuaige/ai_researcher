@@ -40,6 +40,8 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
     try:
         task = load_artifact_from_file(workspace_dir, "task")
         literature_text = load_artifact_from_file(workspace_dir, "literature") or "No literature review available"
+        knowledge_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        knowledge_text = knowledge_text.split("\n## Source Metadata Appendix", 1)[0].strip()
 
         if not task:
             raise WorkflowError("Task file not found")
@@ -117,7 +119,11 @@ def hypothesis_construction_node(state: ResearchState) -> Dict[str, Any]:
         critic.handoffs.set_after_work(FunctionTarget(critic_after_work))
         formatter.handoffs.set_after_work(TerminateTarget())
 
-        initial_message = IDEA_PROPOSAL_PROMPT.format(task=task, literature=literature_text)
+        initial_message = IDEA_PROPOSAL_PROMPT.format(
+            task=task,
+            literature=literature_text,
+            knowledge=knowledge_text or "No additional user-provided source knowledge available.",
+        )
         log_stage(workspace_dir, "hypothesis_construction", f"Running debate (max {max_iterations} rounds)")
 
         if state["config"]["researcher"]["iterable"]:

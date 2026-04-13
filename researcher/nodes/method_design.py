@@ -40,6 +40,8 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
     try:
         task = load_artifact_from_file(workspace_dir, "task")
         idea_content = load_artifact_from_file(workspace_dir, "idea") or "No idea available"
+        knowledge_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        knowledge_text = knowledge_text.split("\n## Source Metadata Appendix", 1)[0].strip()
 
         if not task:
             raise WorkflowError("Task file not found")
@@ -118,7 +120,11 @@ def method_design_node(state: ResearchState) -> Dict[str, Any]:
         critic.handoffs.set_after_work(FunctionTarget(critic_after_work))
         formatter.handoffs.set_after_work(TerminateTarget())
 
-        initial_message = METHOD_PROPOSAL_PROMPT.format(idea=idea_content, task=task)
+        initial_message = METHOD_PROPOSAL_PROMPT.format(
+            idea=idea_content,
+            task=task,
+            knowledge=knowledge_text or "No additional user-provided source knowledge available.",
+        )
         log_stage(workspace_dir, "method_design", f"Running debate (max {max_iterations} rounds)")
 
         if state["config"]["researcher"]["iterable"]:

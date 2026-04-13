@@ -80,6 +80,9 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         test_summary = False
 
         llm_config = get_llm_config()
+        knowledge_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        knowledge_text = knowledge_text.split("\n## Source Metadata Appendix", 1)[0].strip()
+        knowledge_prompt_text = knowledge_text or "No additional user-provided source knowledge available."
 
         def search_literature_papers(
             context_variables: ContextVariables,
@@ -394,7 +397,7 @@ def literature_review_node(state: ResearchState) -> Dict[str, Any]:
         summarizer.handoffs.set_after_work(TerminateTarget())
 
         if use_manager:
-            prompt = LITERATURE_MANAGER_INITIAL_PROMPT.format(task=task)
+            prompt = LITERATURE_MANAGER_INITIAL_PROMPT.format(task=task, knowledge_prompt_text=knowledge_prompt_text)
         elif test_summary:
             prompt = prepare_summary_input(None, ctx)[0]
         else:

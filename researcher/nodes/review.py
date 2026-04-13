@@ -33,6 +33,8 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
         config = state["config"]["researcher"]["review"]
         input_type = config.get("input_type", "literature") # paper or literature
         enable_skill = config.get("enable_skill", False)
+        knowledge_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        knowledge_text = knowledge_text.split("\n## Source Metadata Appendix", 1)[0].strip()
         content = load_artifact_from_file(workspace_dir, input_type)
         if not content:
             base_path = get_artifact_path(workspace_dir, input_type)
@@ -65,7 +67,10 @@ def review_node(state: ResearchState) -> Dict[str, Any]:
             prompt = content
         else:
             review_prompt = Template(REVIEW_PROMPT)
-            prompt = review_prompt.substitute(content=content)
+            prompt = review_prompt.substitute(
+                content=content,
+                knowledge=knowledge_text or "No additional user-provided source knowledge available.",
+            )
 
         if state["config"]["researcher"]["iterable"]:
             result, context, last_agent = iterable_group_chat(

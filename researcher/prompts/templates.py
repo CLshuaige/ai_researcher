@@ -689,6 +689,12 @@ TASK_CLARIFICATION_PROMPT = """Analyze the following research input and determin
 
 Input: {input_text}
 
+If the input includes optional source knowledge derived from user-uploaded files, URLs, repositories, or notes:
+- treat it as helpful context rather than a mandatory constraint
+- use only the parts that genuinely help clarify the task
+- prefer concrete resource, data, domain, and constraint signals when they are relevant
+- ignore irrelevant source details instead of forcing them into the task definition
+
 If the input is clear and contains sufficient information (research question, objectives, constraints), provide your analysis and the reformatted task description, then end your response with:
 ==========CLEAR==========
 
@@ -796,6 +802,14 @@ LITERATURE_MANAGER_INITIAL_PROMPT = """
 Analyze the research task, identify the relevant literature, and generate a literature review plan.
 
 Task: {task}
+
+Optional User-Provided Source Knowledge:
+{knowledge}
+
+Use the optional source knowledge selectively:
+- It comes from user-uploaded materials and may reveal domain terminology, datasets, repositories, constraints, or evaluation context.
+- Use it to improve search planning when it is genuinely relevant.
+- Do not let it override the task or force unnecessary search directions.
 """
 
 LITERATRUE_SEARCH_PROMPT_WITH_MANAGER = """
@@ -1073,6 +1087,7 @@ IDEA_PROPOSAL_PROMPT = """Based on the following context, propose a pragmatic, a
 
 Task: {task}
 Literature Review: {literature}
+Optional User-Provided Source Knowledge: {knowledge}
 
 ## Your Proposal Must Include
 
@@ -1104,6 +1119,8 @@ Literature Review: {literature}
 - Do NOT self-censor for feasibility - propose ambitious ideas if scientifically motivated
 - Consider both incremental improvements AND potentially transformative approaches
 - Ground your proposal in the literature review provided
+- Use the optional source knowledge only when it improves grounding in the user's actual data, code, domain context, constraints, or available assets
+- Do not force every uploaded-source detail into the idea
 """
 
 IDEA_FORMATTER_PROMPT = """Review the following debate history and format the output. Your role is to synthesize the debate between PROPOSER (scientific value) and CRITIC (feasibility constraints) into a balanced evaluation.
@@ -1164,6 +1181,7 @@ METHOD_PROPOSAL_PROMPT = """Design a scientifically rigorous experimental method
 
 Idea: {idea}
 Task: {task}
+Optional User-Provided Source Knowledge: {knowledge}
 
 ## Method Design Focus
 1. **Hypothesis Validation**: Design experiments that can genuinely validate or falsify the core hypothesis
@@ -1202,6 +1220,8 @@ For each step, specify:
 - Consider multiple methodological approaches if relevant
 - The CRITIC will help identify feasibility issues and suggest compromises
 - Balance comprehensiveness with focus - test the core hypothesis well
+- Use the optional source knowledge when it helps choose realistic datasets, repositories, implementation assets, domain constraints, or evaluation settings
+- Do not force every uploaded source into the method if it is not actually useful
 """
 
 METHOD_FORMATTER_PROMPT = """Review the following debate history and format the final experimental method. Your role is to synthesize the debate between PLANNER (scientific validity) and CRITIC (feasibility constraints) into a balanced final method.
@@ -1433,6 +1453,13 @@ EXPERIMENT_EXECUTION_CONTEXT_PROMPT = """You are working on the following resear
 ## Research Context
 **Task**: {task}
 **Idea**: {idea}
+**Optional User-Provided Source Knowledge**:
+{knowledge}
+
+Use the optional source knowledge selectively:
+- It may identify user-provided datasets, repositories, documents, domain constraints, or evaluation hints.
+- Use only the parts that help execute the current method step more effectively.
+- Do not force unrelated uploaded-source details into the implementation plan.
 """
 
 # Experiment Execution Instuctions
@@ -1482,6 +1509,9 @@ You are generating concise engineering guidance for Step {step_id} of a research
 
 ## Context
 {context}
+
+## Optional User-Provided Source Knowledge
+{knowledge}
 
 --------------------------------
 CODING AGENT EXECUTION CONSTRAINTS
@@ -1586,12 +1616,20 @@ RA_STEP_PROMPT = """You are working on Step {step_id} of a research experiment.
 **Available Files from Previous Steps**:
 {available_files}
 
+**Optional User-Provided Source Knowledge**:
+{knowledge}
+
 Provide guidance to complete this wet experiment. When complete, provide a detailed summary of what was accomplished."""
 
 
 REVIEW_PROMPT = """Review the following research paper:
 
 Paper: $content
+
+Optional User-Provided Source Knowledge:
+$knowledge
+
+Use the optional source knowledge only when it helps judge relevance, realism of assumptions, resource alignment, or whether the reviewed artifact meaningfully connects to the user's actual materials.
 
 Provide a structured review with:
 

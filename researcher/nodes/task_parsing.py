@@ -28,7 +28,6 @@ from researcher.utils import (
     log_stage,
     get_artifact_path,
     load_artifact_from_file,
-    load_markdown,
     get_llm_config,
     save_agent_history,
     raise_if_run_cancel_requested,
@@ -47,8 +46,8 @@ def task_parsing_node(state: ResearchState) -> Dict[str, Any]:
         if not input_text:
             raise WorkflowError("Input file not found")
 
-        summary_path = workspace_dir / "knowledge" / "knowledge.md"
-        summary_text = load_markdown(summary_path)
+        summary_text = load_artifact_from_file(workspace_dir, "knowledge") or ""
+        summary_text = summary_text.split("\n## Source Metadata Appendix", 1)[0].strip()
         if summary_text:
             input_text = (
                 f"{input_text.rstrip()}\n\n"
